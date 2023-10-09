@@ -50,7 +50,7 @@ impl UnetBlock {
             if let Some(submodule) = submodule {
                 seq = seq.add(submodule);
             }
-            seq = seq.add_fn(|t| t.maximum(&(t * 0.2))); // leaky relu
+            seq = seq.add_fn(|t| t.relu());
             seq = seq.add(upconv);
             seq = seq.add_fn(|t| t.tanh());
         } else if innermost {

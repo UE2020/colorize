@@ -242,10 +242,10 @@ fn main() -> Result<()> {
                     // optimize discriminator
                     discriminator_vs.unfreeze();
                     discriminator_opt.zero_grad();
-                    let fake_image = Tensor::cat(&[input.shallow_clone(), fake_color.shallow_clone()], 1);
+                    let fake_image = Tensor::cat(&[input.copy(), fake_color.copy()], 1);
                     let fake_preds = discriminator_net.forward(&fake_image.detach(), true);
                     let loss_d_fake = gan_criterion.forward(&fake_preds, false);
-                    let real_image = Tensor::cat(&[input.shallow_clone(), target.shallow_clone()], 1);
+                    let real_image = Tensor::cat(&[input.copy(), target.copy()], 1);
                     let real_preds = discriminator_net.forward(&real_image, true);
                     let loss_d_real = gan_criterion.forward(&real_preds, true);
                     let loss_d = (loss_d_fake + loss_d_real) * 0.5;
@@ -263,8 +263,8 @@ fn main() -> Result<()> {
                     generator_opt.step();
                     train_writer.add_scalar("Generator Loss", f32::try_from(loss_g)?, steps as _);
                     train_writer.add_scalar("Discriminator Loss", f32::try_from(loss_d)?, steps as _);
-                    // every 50 steps, send an image to tensorboard
-                    if steps % 50 == 0 {
+                    // every 5 steps, send an image to tensorboard
+                    if steps % 5 == 0 {
                         let l = input.narrow(0, 0, 1).squeeze();
                         let ab = fake_color.narrow(0, 0, 1).squeeze();
                         let img = lab_to_rgb(&l, &ab)?;
@@ -274,7 +274,7 @@ fn main() -> Result<()> {
                             "Sample",
                             img.as_raw(),
                             &[3, w as usize, h as usize],
-                            steps as _,
+                            0,
                         );
                     }
                 }
@@ -287,8 +287,8 @@ fn main() -> Result<()> {
                     let input = Tensor::stack(&inputs, 0);
                     let output = Tensor::stack(&outputs, 0);
                     let out = generator_net.forward_t(&input.to(device), true);
-                    let loss = out.l1_loss(&output.to(device), tch::Reduction::Mean);
-                    test_writer.add_scalar("Loss", f32::try_from(loss)?, test_steps as _);
+                    let loss = out.l1_loss(&output.to(device), tch::Reduction::Mean) * lambda_l1;
+                    test_writer.add_scalar("Generator Loss", f32::try_from(loss)?, test_steps as _);
                 }
                 println!("epoch: {:02} complete!", epoch);
                 generator_vs.save(&format!("model{:02}.safetensors", epoch))?;
