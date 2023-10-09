@@ -3,12 +3,12 @@ use image::imageops::FilterType::Lanczos3;
 use image::{Rgb, RgbImage};
 use lab::Lab;
 use ndarray::{Array3, ArrayBase, Dim, IxDynImpl, OwnedRepr};
-use opencv::core::VecN;
-use opencv::prelude::MatTraitConst;
-use opencv::prelude::MatTraitManual;
-use opencv::prelude::VideoCaptureTrait;
-use opencv::prelude::VideoCaptureTraitConst;
-use opencv::*;
+// use opencv::core::VecN;
+// use opencv::prelude::MatTraitConst;
+// use opencv::prelude::MatTraitManual;
+// use opencv::prelude::VideoCaptureTrait;
+// use opencv::prelude::VideoCaptureTraitConst;
+// use opencv::*;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::fs::{read_dir, remove_dir_all};
@@ -40,50 +40,50 @@ fn load_lab(img: impl AsRef<Path>, resize: bool) -> Result<(Tensor, Tensor)> {
     Ok((l, ab))
 }
 
-fn colorize_opencv(frame: &mut core::Mat, net: &impl ModuleT, device: Device) -> Result<()> {
-    let size = frame.size()?;
-    let (w, h) = (size.width, size.height);
-    let data = frame.data_typed_mut::<VecN<u8, 3>>()?;
-    let mut l: Array3<f32> = ndarray::ArrayBase::zeros((1, w as usize, h as usize));
-    let mut ab: Array3<f32> = ndarray::ArrayBase::zeros((2, w as usize, h as usize));
-    for (i, pixel) in data.iter().enumerate() {
-        let lab = Lab::from_rgb(&[pixel[2], pixel[1], pixel[0]]);
-        let y = (i as f32 / (w) as f32).floor();
-        let x = i % (w as usize);
-        l[[0, x as usize, y as usize]] = (((lab.l) / 100.) - 0.5) * 2.0;
-        ab[[0, x as usize, y as usize]] = (((lab.a + 128.0) / 255.) - 0.5) * 2.0;
-        ab[[1, x as usize, y as usize]] = (((lab.b + 128.0) / 255.) - 0.5) * 2.0;
-    }
-    let l: Tensor = l.try_into()?;
-    let new_ab = tch::no_grad(|| -> anyhow::Result<Tensor> {
-        let resized_l = l.copy().to_device(device).unsqueeze(0).upsample_bilinear2d(
-            [256, 256],
-            false,
-            None,
-            None,
-        );
-        let out = net.forward_t(&resized_l, false);
-        let out = out
-            .upsample_bilinear2d([w as i64, h as i64], false, None, None)
-            .squeeze();
-        Ok(out)
-    })?;
-    let l: ArrayBase<OwnedRepr<f32>, Dim<IxDynImpl>> = (&l.squeeze()).try_into()?;
-    let ab: ArrayBase<OwnedRepr<f32>, Dim<IxDynImpl>> = (&new_ab).try_into()?;
-    for (i, pixel) in data.iter_mut().enumerate() {
-        let y = (i as f32 / (w) as f32).floor();
-        let x = i % (w as usize);
-        let rgb = Lab::to_rgb(&Lab {
-            l: (l[[x as usize, y as usize]] / 2.0 + 0.5) * 100.0,
-            a: (ab[[0, x as usize, y as usize]] / 2.0 + 0.5) * 255. - 128.0,
-            b: (ab[[1, x as usize, y as usize]] / 2.0 + 0.5) * 255. - 128.0,
-        });
-        pixel[2] = rgb[0];
-        pixel[1] = rgb[1];
-        pixel[0] = rgb[2];
-    }
-    Ok(())
-}
+// fn colorize_opencv(frame: &mut core::Mat, net: &impl ModuleT, device: Device) -> Result<()> {
+//     let size = frame.size()?;
+//     let (w, h) = (size.width, size.height);
+//     let data = frame.data_typed_mut::<VecN<u8, 3>>()?;
+//     let mut l: Array3<f32> = ndarray::ArrayBase::zeros((1, w as usize, h as usize));
+//     let mut ab: Array3<f32> = ndarray::ArrayBase::zeros((2, w as usize, h as usize));
+//     for (i, pixel) in data.iter().enumerate() {
+//         let lab = Lab::from_rgb(&[pixel[2], pixel[1], pixel[0]]);
+//         let y = (i as f32 / (w) as f32).floor();
+//         let x = i % (w as usize);
+//         l[[0, x as usize, y as usize]] = (((lab.l) / 100.) - 0.5) * 2.0;
+//         ab[[0, x as usize, y as usize]] = (((lab.a + 128.0) / 255.) - 0.5) * 2.0;
+//         ab[[1, x as usize, y as usize]] = (((lab.b + 128.0) / 255.) - 0.5) * 2.0;
+//     }
+//     let l: Tensor = l.try_into()?;
+//     let new_ab = tch::no_grad(|| -> anyhow::Result<Tensor> {
+//         let resized_l = l.copy().to_device(device).unsqueeze(0).upsample_bilinear2d(
+//             [256, 256],
+//             false,
+//             None,
+//             None,
+//         );
+//         let out = net.forward_t(&resized_l, false);
+//         let out = out
+//             .upsample_bilinear2d([w as i64, h as i64], false, None, None)
+//             .squeeze();
+//         Ok(out)
+//     })?;
+//     let l: ArrayBase<OwnedRepr<f32>, Dim<IxDynImpl>> = (&l.squeeze()).try_into()?;
+//     let ab: ArrayBase<OwnedRepr<f32>, Dim<IxDynImpl>> = (&new_ab).try_into()?;
+//     for (i, pixel) in data.iter_mut().enumerate() {
+//         let y = (i as f32 / (w) as f32).floor();
+//         let x = i % (w as usize);
+//         let rgb = Lab::to_rgb(&Lab {
+//             l: (l[[x as usize, y as usize]] / 2.0 + 0.5) * 100.0,
+//             a: (ab[[0, x as usize, y as usize]] / 2.0 + 0.5) * 255. - 128.0,
+//             b: (ab[[1, x as usize, y as usize]] / 2.0 + 0.5) * 255. - 128.0,
+//         });
+//         pixel[2] = rgb[0];
+//         pixel[1] = rgb[1];
+//         pixel[0] = rgb[2];
+//     }
+//     Ok(())
+// }
 
 fn lab_to_rgb(l: &Tensor, ab: &Tensor) -> Result<RgbImage> {
     let (w, h) = l.size2()?;
@@ -303,44 +303,44 @@ fn main() -> Result<()> {
             })?;
         }
         "video" => {
-            generator_vs.load(&args[2])?;
-            let window = "Video Display";
-            highgui::named_window(window, 1)?;
-            let file_name = &args[3];
-            let mut cam = videoio::VideoCapture::from_file(&file_name, videoio::CAP_ANY)?;
-            let opened_file =
-                videoio::VideoCapture::open_file(&mut cam, &file_name, videoio::CAP_ANY)?;
-            if !opened_file {
-                panic!("Unable to open video file2!");
-            };
-            let mut frame = core::Mat::default();
-            let frame_read = videoio::VideoCapture::read(&mut cam, &mut frame)?;
-            if !frame_read {
-                panic!("Unable to read from video file!");
-            };
-            let opened = videoio::VideoCapture::is_opened(&mut cam)?;
-            println!("Opened? {}", opened);
-            if !opened {
-                panic!("Unable to open video file!");
-            };
-            let mut frame_num = 0;
-            loop {
-                videoio::VideoCapture::read(&mut cam, &mut frame)?;
-                if frame.size()?.width > 0 {
-                    if frame_num % 60 == 0 {
-                        println!("Got a frame!");
-                        colorize_opencv(&mut frame, &generator_net, device)?;
-                        highgui::imshow(window, &frame)?;
-                        #[allow(unused)]
-                        let key = highgui::wait_key(1000)?;
-                    }
-                    frame_num += 1;
-                } else {
-                    println!("No more frames!");
-                    videoio::VideoCapture::release(&mut cam)?;
-                    break ();
-                }
-            }
+            // generator_vs.load(&args[2])?;
+            // let window = "Video Display";
+            // highgui::named_window(window, 1)?;
+            // let file_name = &args[3];
+            // let mut cam = videoio::VideoCapture::from_file(&file_name, videoio::CAP_ANY)?;
+            // let opened_file =
+            //     videoio::VideoCapture::open_file(&mut cam, &file_name, videoio::CAP_ANY)?;
+            // if !opened_file {
+            //     panic!("Unable to open video file2!");
+            // };
+            // let mut frame = core::Mat::default();
+            // let frame_read = videoio::VideoCapture::read(&mut cam, &mut frame)?;
+            // if !frame_read {
+            //     panic!("Unable to read from video file!");
+            // };
+            // let opened = videoio::VideoCapture::is_opened(&mut cam)?;
+            // println!("Opened? {}", opened);
+            // if !opened {
+            //     panic!("Unable to open video file!");
+            // };
+            // let mut frame_num = 0;
+            // loop {
+            //     videoio::VideoCapture::read(&mut cam, &mut frame)?;
+            //     if frame.size()?.width > 0 {
+            //         if frame_num % 60 == 0 {
+            //             println!("Got a frame!");
+            //             colorize_opencv(&mut frame, &generator_net, device)?;
+            //             highgui::imshow(window, &frame)?;
+            //             #[allow(unused)]
+            //             let key = highgui::wait_key(1000)?;
+            //         }
+            //         frame_num += 1;
+            //     } else {
+            //         println!("No more frames!");
+            //         videoio::VideoCapture::release(&mut cam)?;
+            //         break ();
+            //     }
+            // }
         }
         _ => bail!("Usage: (train|test|video) model-path file-path"),
     }
