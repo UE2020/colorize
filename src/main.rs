@@ -217,7 +217,7 @@ fn main() -> Result<()> {
             let gan_criterion = unet::GANLoss::new(1.0, 0.0, device);
             let mut generator_opt = nn::Adam::default().beta1(0.5).beta2(0.999).build(&generator_vs, 2e-4)?;
             let mut discriminator_opt = nn::Adam::default().beta1(0.5).beta2(0.999).build(&discriminator_vs, 2e-4)?;
-            let mut images = read_dir("./images")?
+            let mut images = read_dir("../images")?
                 .filter_map(|e| e.ok())
                 .map(|p| p.path().to_string_lossy().into_owned())
                 .collect::<Vec<_>>();
