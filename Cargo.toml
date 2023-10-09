@@ -1,0 +1,16 @@
+[package]
+name = "autoencoder"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.75"
+image = "0.24.7"
+lab = "0.11.0"
+ndarray = "0.15.6"
+opencv = "0.84.5"
+rand = "0.8.5"
+tch = "0.13.0"
+tensorboard-rs = "0.5.9"
