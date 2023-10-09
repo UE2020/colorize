@@ -210,25 +210,20 @@ fn main() -> Result<()> {
             remove_dir_all("./logdir")?;
             let mut train_writer =
                 tensorboard::summary_writer::SummaryWriter::new("./logdir/train");
-            let mut test_writer = tensorboard::summary_writer::SummaryWriter::new("./logdir/test");
+            //let mut test_writer = tensorboard::summary_writer::SummaryWriter::new("./logdir/test");
             let mut discriminator_vs = nn::VarStore::new(device);
             let lambda_l1 = 100.0;
             let discriminator_net = unet::PatchDiscriminator::new(discriminator_vs.root(), 3, 64, 3);
             let gan_criterion = unet::GANLoss::new(1.0, 0.0, device);
             let mut generator_opt = nn::Adam::default().beta1(0.5).beta2(0.999).build(&generator_vs, 2e-4)?;
             let mut discriminator_opt = nn::Adam::default().beta1(0.5).beta2(0.999).build(&discriminator_vs, 2e-4)?;
-            let mut images = read_dir("/home/tt/Downloads/images/")?
-                .filter_map(|e| e.ok())
-                .map(|p| p.path().to_string_lossy().into_owned())
-                .collect::<Vec<_>>();
-            let mut test_images = read_dir("./test-data/test-data/truth")?
+            let mut images = read_dir("./images")?
                 .filter_map(|e| e.ok())
                 .map(|p| p.path().to_string_lossy().into_owned())
                 .collect::<Vec<_>>();
             let mut steps = 0usize;
-            let mut test_steps = 0usize;
+            //let mut test_steps = 0usize;
             for epoch in 1..=30 {
-                test_images.shuffle(&mut thread_rng());
                 images.shuffle(&mut thread_rng());
                 for images in images.chunks(16) {
                     steps += 1;
@@ -278,18 +273,18 @@ fn main() -> Result<()> {
                         );
                     }
                 }
-                for images in test_images.chunks(16) {
-                    test_steps += 1;
-                    let (inputs, outputs): (Vec<_>, Vec<_>) = images
-                        .into_iter()
-                        .map(|img_path| load_lab(img_path, true).expect("failed to open image"))
-                        .unzip();
-                    let input = Tensor::stack(&inputs, 0);
-                    let output = Tensor::stack(&outputs, 0);
-                    let out = generator_net.forward_t(&input.to(device), true);
-                    let loss = out.l1_loss(&output.to(device), tch::Reduction::Mean) * lambda_l1;
-                    test_writer.add_scalar("Generator Loss", f32::try_from(loss)?, test_steps as _);
-                }
+                // for images in test_images.chunks(16) {
+                //     test_steps += 1;
+                //     let (inputs, outputs): (Vec<_>, Vec<_>) = images
+                //         .into_iter()
+                //         .map(|img_path| load_lab(img_path, true).expect("failed to open image"))
+                //         .unzip();
+                //     let input = Tensor::stack(&inputs, 0);
+                //     let output = Tensor::stack(&outputs, 0);
+                //     let out = generator_net.forward_t(&input.to(device), true);
+                //     let loss = out.l1_loss(&output.to(device), tch::Reduction::Mean) * lambda_l1;
+                //     test_writer.add_scalar("Generator Loss", f32::try_from(loss)?, test_steps as _);
+                // }
                 println!("epoch: {:02} complete!", epoch);
                 generator_vs.save(&format!("model{:02}.safetensors", epoch))?;
             }
