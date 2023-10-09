@@ -1,4 +1,4 @@
-use tch::nn::{conv_transpose2d, ConvConfig, ConvTransposeConfig, ModuleT};
+use tch::nn::{conv_transpose2d, ConvConfig, ConvTransposeConfig, ModuleT, Init, BatchNormConfig};
 use tch::{nn, Tensor, Device};
 
 #[derive(Debug)]
@@ -29,11 +29,21 @@ impl UnetBlock {
                 stride: 2,
                 padding: 1,
                 bias: false,
+                ws_init: Init::Randn { mean: 0.0, stdev: 0.02 },
+                bs_init: Init::Const(0.0),
                 ..Default::default()
             },
         );
-        let downnorm = nn::batch_norm2d(&p / "downnorm", ni as _, Default::default());
-        let upnorm = nn::batch_norm2d(&p / "upnorm", nf as _, Default::default());
+        let downnorm = nn::batch_norm2d(&p / "downnorm", ni as _, BatchNormConfig {
+            ws_init: Init::Randn { mean: 1.0, stdev: 0.02 },
+            bs_init: Init::Const(0.0),
+            ..Default::default()
+        });
+        let upnorm = nn::batch_norm2d(&p / "upnorm", nf as _, BatchNormConfig {
+            ws_init: Init::Randn { mean: 1.0, stdev: 0.02 },
+            bs_init: Init::Const(0.0),
+            ..Default::default()
+        });
         if outermost {
             let upconv = conv_transpose2d(
                 &p / "upconv",
@@ -43,6 +53,8 @@ impl UnetBlock {
                 ConvTransposeConfig {
                     stride: 2,
                     padding: 1,
+                    ws_init: Init::Randn { mean: 0.0, stdev: 0.02 },
+                    bs_init: Init::Const(0.0),
                     ..Default::default()
                 },
             );
@@ -63,6 +75,8 @@ impl UnetBlock {
                     stride: 2,
                     padding: 1,
                     bias: false,
+                    ws_init: Init::Randn { mean: 0.0, stdev: 0.02 },
+                    bs_init: Init::Const(0.0),
                     ..Default::default()
                 },
             );
@@ -81,6 +95,8 @@ impl UnetBlock {
                     stride: 2,
                     padding: 1,
                     bias: false,
+                    ws_init: Init::Randn { mean: 0.0, stdev: 0.02 },
+                    bs_init: Init::Const(0.0),
                     ..Default::default()
                 },
             );
@@ -226,11 +242,17 @@ impl PatchDiscriminator {
                 stride: stride as _,
                 padding: pad as _,
                 bias: !norm,
+                ws_init: Init::Randn { mean: 0.0, stdev: 0.02 },
+                bs_init: Init::Const(0.0),
                 ..Default::default()
             },
         ));
         if norm {
-            seq = seq.add(nn::batch_norm2d(&p / "norm", nf as _, Default::default()))
+            seq = seq.add(nn::batch_norm2d(&p / "norm", nf as _, BatchNormConfig {
+                ws_init: Init::Randn { mean: 1.0, stdev: 0.02 },
+                bs_init: Init::Const(0.0),
+                ..Default::default()
+            }))
         }
         if act {
             seq = seq.add_fn(|t| t.maximum(&(t * 0.2))); // leaky relu
