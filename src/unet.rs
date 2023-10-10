@@ -110,7 +110,7 @@ impl UnetBlock {
             seq = seq.add(upconv);
             seq = seq.add(upnorm);
             if dropout {
-                seq = seq.add_fn_t(|t, train| t.dropout(0.5, train));
+                seq = seq.add_fn_t(|t, _| t.dropout(0.5, true));
             }
         }
 
@@ -298,3 +298,4 @@ impl GANLoss {
         loss
     }
 }
+
