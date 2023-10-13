@@ -1,105 +1,9 @@
-use tch::nn::{conv2d, BatchNormConfig, ConvConfig, ConvTransposeConfig, Init, ModuleT};
+use tch::nn::{
+    conv2d, BatchNormConfig, ConvConfig, ConvTransposeConfig, Init, ModuleT, PaddingMode,
+};
 use tch::{nn, Device, Tensor};
 
-#[derive(Debug)]
-pub struct PatchDiscriminator {
-    seq: nn::SequentialT,
-}
-
-impl PatchDiscriminator {
-    pub fn new(p: nn::Path, input_c: usize, num_filters: usize, n_down: usize) -> Self {
-        let mut seq = nn::seq_t().add(Self::get_layers(
-            &p / "initial",
-            input_c,
-            num_filters,
-            4,
-            2,
-            1,
-            false,
-            true,
-        ));
-        for i in 0..n_down {
-            seq = seq.add(Self::get_layers(
-                &p / &format!("{}", i),
-                num_filters * 2_usize.pow(i as u32),
-                num_filters * 2_usize.pow(i as u32 + 1),
-                4,
-                if i == (n_down - 1) { 1 } else { 2 },
-                1,
-                true,
-                true,
-            ));
-        }
-        seq = seq.add(Self::get_layers(
-            &p / "final",
-            num_filters * 2_usize.pow(n_down as u32),
-            1,
-            4,
-            1,
-            1,
-            false,
-            false,
-        ));
-        Self { seq }
-    }
-
-    pub fn get_layers(
-        p: nn::Path,
-        ni: usize,
-        nf: usize,
-        k: usize,
-        stride: usize,
-        pad: usize,
-        norm: bool,
-        act: bool,
-    ) -> nn::SequentialT {
-        let mut seq = nn::seq_t().add(nn::conv2d(
-            &p / "input",
-            ni as _,
-            nf as _,
-            k as _,
-            ConvConfig {
-                stride: stride as _,
-                padding: pad as _,
-                bias: !norm,
-                ws_init: Init::Randn {
-                    mean: 0.0,
-                    stdev: 0.02,
-                },
-                bs_init: Init::Const(0.0),
-                ..Default::default()
-            },
-        ));
-        if norm {
-            seq = seq.add(nn::batch_norm2d(
-                &p / "norm",
-                nf as _,
-                BatchNormConfig {
-                    ws_init: Init::Randn {
-                        mean: 1.0,
-                        stdev: 0.02,
-                    },
-                    bs_init: Init::Const(0.0),
-                    ..Default::default()
-                },
-            ))
-        }
-        if act {
-            seq = seq.add_fn(|t| t.maximum(&(t * 0.2))); // leaky relu
-        }
-        seq
-    }
-
-    pub fn forward(&self, xs: &Tensor, train: bool) -> Tensor {
-        self.seq.forward_t(xs, train)
-    }
-}
-
-impl ModuleT for PatchDiscriminator {
-    fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
-        self.forward(xs, train)
-    }
-}
+mod norm;
 
 pub struct GANLoss {
     real_label: Tensor,
@@ -134,7 +38,97 @@ impl GANLoss {
     }
 }
 
-pub fn cnn_block(
+pub fn discriminator_block(vs: nn::Path, in_chan: i64, out_chan: i64, stride: i64) -> impl ModuleT {
+    nn::seq_t()
+        .add(nn::conv2d(
+            &vs / "conv2d",
+            in_chan,
+            out_chan,
+            4,
+            ConvConfig {
+                stride,
+                padding: 1,
+                bias: false,
+                padding_mode: PaddingMode::Reflect,
+                ws_init: Init::Randn {
+                    mean: 0.0,
+                    stdev: 0.02,
+                },
+                bs_init: Init::Const(0.0),
+                ..Default::default()
+            },
+        ))
+        .add(nn::batch_norm2d(
+            &vs / "batchnorm",
+            out_chan,
+            BatchNormConfig {
+                ws_init: Init::Randn {
+                    mean: 1.0,
+                    stdev: 0.02,
+                },
+                bs_init: Init::Const(0.0),
+                ..Default::default()
+            },
+        ))
+        .add(leaky_relu(0.2))
+}
+
+pub fn discriminator(vs: nn::Path, in_chan: i64, features: &[i64]) -> impl ModuleT {
+    let initial = nn::seq_t()
+        .add(nn::conv2d(
+            &vs / "initial",
+            in_chan,
+            features[0],
+            4,
+            ConvConfig {
+                stride: 2,
+                padding: 1,
+                padding_mode: PaddingMode::Reflect,
+                ws_init: Init::Randn {
+                    mean: 0.0,
+                    stdev: 0.02,
+                },
+                bs_init: Init::Const(0.0),
+                ..Default::default()
+            },
+        ))
+        .add(leaky_relu(0.2));
+    let mut layers = nn::seq_t();
+    let mut in_chan = features[0];
+    for (i, feature) in features[1..].iter().enumerate() {
+        layers = layers.add(discriminator_block(
+            &vs / &format!("layer{}", i),
+            in_chan,
+            *feature,
+            if feature == features.last().unwrap() {
+                1
+            } else {
+                2
+            },
+        ));
+        in_chan = *feature;
+    }
+
+    initial.add(layers.add(nn::conv2d(
+        &vs / "final",
+        in_chan,
+        1,
+        4,
+        ConvConfig {
+            stride: 1,
+            padding: 1,
+            padding_mode: PaddingMode::Reflect,
+            ws_init: Init::Randn {
+                mean: 0.0,
+                stdev: 0.02,
+            },
+            bs_init: Init::Const(0.0),
+            ..Default::default()
+        },
+    )))
+}
+
+pub fn generator_block(
     vs: nn::Path,
     in_chan: i64,
     out_chan: i64,
@@ -153,7 +147,14 @@ pub fn cnn_block(
     .add(nn::batch_norm2d(
         &vs / "batchnorm",
         out_chan,
-        Default::default(),
+        BatchNormConfig {
+            ws_init: Init::Randn {
+                mean: 1.0,
+                stdev: 0.02,
+            },
+            bs_init: Init::Const(0.0),
+            ..Default::default()
+        },
     ))
     .add_fn(match leaky {
         true => |t: &Tensor| t.maximum(&(t * 0.2)),
@@ -180,16 +181,21 @@ pub fn generator(vs: nn::Path, in_chan: i64, features: i64, out_chan: i64) -> im
                 stride: 2,
                 padding: 1,
                 padding_mode: nn::PaddingMode::Reflect,
+                ws_init: Init::Randn {
+                    mean: 0.0,
+                    stdev: 0.02,
+                },
+                bs_init: Init::Const(0.0),
                 ..Default::default()
             },
         ))
         .add(leaky_relu(0.2));
-    let down1 = cnn_block(&vs / "down1", features, features * 2, true, true, false);
-    let down2 = cnn_block(&vs / "down2", features * 2, features * 4, true, true, false);
-    let down3 = cnn_block(&vs / "down3", features * 4, features * 8, true, true, false);
-    let down4 = cnn_block(&vs / "down4", features * 8, features * 8, true, true, false);
-    let down5 = cnn_block(&vs / "down5", features * 8, features * 8, true, true, false);
-    let down6 = cnn_block(&vs / "down6", features * 8, features * 8, true, true, false);
+    let down1 = generator_block(&vs / "down1", features, features * 2, true, true, false);
+    let down2 = generator_block(&vs / "down2", features * 2, features * 4, true, true, false);
+    let down3 = generator_block(&vs / "down3", features * 4, features * 8, true, true, false);
+    let down4 = generator_block(&vs / "down4", features * 8, features * 8, true, true, false);
+    let down5 = generator_block(&vs / "down5", features * 8, features * 8, true, true, false);
+    let down6 = generator_block(&vs / "down6", features * 8, features * 8, true, true, false);
     let bottleneck = nn::seq_t()
         .add(nn::conv2d(
             &vs / "bottleneck",
@@ -199,12 +205,17 @@ pub fn generator(vs: nn::Path, in_chan: i64, features: i64, out_chan: i64) -> im
             ConvConfig {
                 stride: 2,
                 padding: 1,
+                ws_init: Init::Randn {
+                    mean: 0.0,
+                    stdev: 0.02,
+                },
+                bs_init: Init::Const(0.0),
                 ..Default::default()
             },
         ))
         .add_fn(|t| t.relu());
-    let up1 = cnn_block(&vs / "up1", features * 8, features * 8, false, false, true);
-    let up2 = cnn_block(
+    let up1 = generator_block(&vs / "up1", features * 8, features * 8, false, false, true);
+    let up2 = generator_block(
         &vs / "up2",
         features * 8 * 2,
         features * 8,
@@ -212,7 +223,7 @@ pub fn generator(vs: nn::Path, in_chan: i64, features: i64, out_chan: i64) -> im
         false,
         true,
     );
-    let up3 = cnn_block(
+    let up3 = generator_block(
         &vs / "up3",
         features * 8 * 2,
         features * 8,
@@ -220,7 +231,7 @@ pub fn generator(vs: nn::Path, in_chan: i64, features: i64, out_chan: i64) -> im
         false,
         true,
     );
-    let up4 = cnn_block(
+    let up4 = generator_block(
         &vs / "up4",
         features * 8 * 2,
         features * 8,
@@ -228,7 +239,7 @@ pub fn generator(vs: nn::Path, in_chan: i64, features: i64, out_chan: i64) -> im
         false,
         false,
     );
-    let up5 = cnn_block(
+    let up5 = generator_block(
         &vs / "up5",
         features * 8 * 2,
         features * 4,
@@ -236,7 +247,7 @@ pub fn generator(vs: nn::Path, in_chan: i64, features: i64, out_chan: i64) -> im
         false,
         false,
     );
-    let up6 = cnn_block(
+    let up6 = generator_block(
         &vs / "up6",
         features * 4 * 2,
         features * 2,
@@ -244,7 +255,7 @@ pub fn generator(vs: nn::Path, in_chan: i64, features: i64, out_chan: i64) -> im
         false,
         false,
     );
-    let up7 = cnn_block(&vs / "up7", features * 2 * 2, features, false, false, false);
+    let up7 = generator_block(&vs / "up7", features * 2 * 2, features, false, false, false);
     let final_up = nn::seq_t()
         .add(nn::conv_transpose2d(
             &vs / "final_up",
@@ -254,6 +265,11 @@ pub fn generator(vs: nn::Path, in_chan: i64, features: i64, out_chan: i64) -> im
             ConvTransposeConfig {
                 stride: 2,
                 padding: 1,
+                ws_init: Init::Randn {
+                    mean: 0.0,
+                    stdev: 0.02,
+                },
+                bs_init: Init::Const(0.0),
                 ..Default::default()
             },
         ))
@@ -274,7 +290,8 @@ pub fn generator(vs: nn::Path, in_chan: i64, features: i64, out_chan: i64) -> im
         let up5 = up5.forward_t(&Tensor::cat(&[up4, d4], 1), train);
         let up6 = up6.forward_t(&Tensor::cat(&[up5, d3], 1), train);
         let up7 = up7.forward_t(&Tensor::cat(&[up6, d2], 1), train);
-        final_up.forward_t(&Tensor::cat(&[up7, d1], 1), train)
+        let out = final_up.forward_t(&Tensor::cat(&[up7, d1], 1), train);
+        out
     })
 }
 
@@ -289,6 +306,11 @@ pub fn unet_conv(vs: nn::Path, in_chan: i64, out_chan: i64) -> nn::Conv2D {
             padding: 1,
             bias: false,
             padding_mode: nn::PaddingMode::Reflect,
+            ws_init: Init::Randn {
+                mean: 0.0,
+                stdev: 0.02,
+            },
+            bs_init: Init::Const(0.0),
             ..Default::default()
         },
     )
@@ -304,6 +326,11 @@ pub fn unet_conv_transpose(vs: nn::Path, in_chan: i64, out_chan: i64) -> nn::Con
             stride: 2,
             padding: 1,
             bias: false,
+            ws_init: Init::Randn {
+                mean: 0.0,
+                stdev: 0.02,
+            },
+            bs_init: Init::Const(0.0),
             ..Default::default()
         },
     )
