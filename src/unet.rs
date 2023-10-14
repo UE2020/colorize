@@ -161,7 +161,7 @@ pub fn generator_block(
         false => |t: &Tensor| t.relu(),
     });
     match dropout {
-        true => seq.add_fn_t(|t, train| t.dropout(0.5, train)),
+        true => seq.add_fn_t(|t, _| t.dropout(0.5, true)),
         false => seq,
     }
 }

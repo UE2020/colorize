@@ -225,7 +225,7 @@ fn main() -> Result<()> {
                 .beta1(0.5)
                 .beta2(0.999)
                 .build(&discriminator_vs, 2e-4)?;
-            let mut images = read_dir("../movie_colored_frames")?
+            let mut images = read_dir("../combined")?
                 .filter_map(|e| e.ok())
                 .map(|p| p.path().to_string_lossy().into_owned())
                 .collect::<Vec<_>>();
