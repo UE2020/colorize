@@ -230,7 +230,7 @@ fn main() -> Result<()> {
                 .collect::<Vec<_>>();
             let mut steps = 0usize;
             //let mut test_steps = 0usize;
-            for epoch in 1..=30 {
+            for epoch in 1..=7 {
                 images.shuffle(&mut thread_rng());
                 for images in images.chunks(16) {
                     steps += 1;
@@ -273,7 +273,7 @@ fn main() -> Result<()> {
                         steps as _,
                     );
                     // every 5 steps, send an image to tensorboard
-                    if steps % 5 == 0 {
+                    if steps % 10 == 0 {
                         let l = input.narrow(0, 0, 1).squeeze();
                         let ab = fake_color.narrow(0, 0, 1).squeeze();
                         let img = lab_to_rgb(&l, &ab)?;
