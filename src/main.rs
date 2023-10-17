@@ -230,7 +230,7 @@ fn main() -> Result<()> {
                 .collect::<Vec<_>>();
             let mut steps = 0usize;
             //let mut test_steps = 0usize;
-            for epoch in 1..=7 {
+            for epoch in 1..=8 {
                 images.shuffle(&mut thread_rng());
                 for images in images.chunks(16) {
                     steps += 1;
