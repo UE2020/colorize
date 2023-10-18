@@ -48,7 +48,6 @@ pub fn discriminator_block(vs: nn::Path, in_chan: i64, out_chan: i64, stride: i6
             ConvConfig {
                 stride,
                 padding: 1,
-                bias: false,
                 padding_mode: PaddingMode::Reflect,
                 ws_init: Init::Randn {
                     mean: 0.0,
