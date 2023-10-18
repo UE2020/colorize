@@ -1,5 +1,5 @@
 use tch::nn::{
-    conv2d, BatchNormConfig, ConvConfig, ConvTransposeConfig, Init, ModuleT, PaddingMode,
+    conv2d, ConvConfig, ConvTransposeConfig, Init, ModuleT, PaddingMode,
 };
 use tch::{nn, Device, Tensor};
 
@@ -58,15 +58,12 @@ pub fn discriminator_block(vs: nn::Path, in_chan: i64, out_chan: i64, stride: i6
                 ..Default::default()
             },
         ))
-        .add(nn::batch_norm2d(
-            &vs / "batchnorm",
+        .add(norm::instance_norm2d(
+            &vs / "instancenorm",
             out_chan,
-            BatchNormConfig {
-                ws_init: Init::Randn {
-                    mean: 1.0,
-                    stdev: 0.02,
-                },
-                bs_init: Init::Const(0.0),
+            norm::InstanceNormConfig {
+                affine: false,
+                track_running_stats: false,
                 ..Default::default()
             },
         ))
@@ -144,15 +141,12 @@ pub fn generator_block(
             out_chan,
         )),
     }
-    .add(nn::batch_norm2d(
-        &vs / "batchnorm",
+    .add(norm::instance_norm2d(
+        &vs / "instancenorm",
         out_chan,
-        BatchNormConfig {
-            ws_init: Init::Randn {
-                mean: 1.0,
-                stdev: 0.02,
-            },
-            bs_init: Init::Const(0.0),
+        norm::InstanceNormConfig {
+            affine: false,
+            track_running_stats: false,
             ..Default::default()
         },
     ))
@@ -161,7 +155,7 @@ pub fn generator_block(
         false => |t: &Tensor| t.relu(),
     });
     match dropout {
-        true => seq.add_fn_t(|t, _| t.dropout(0.5, true)),
+        true => seq.add_fn_t(|t, train| t.dropout(0.5, train)),
         false => seq,
     }
 }
@@ -304,7 +298,6 @@ pub fn unet_conv(vs: nn::Path, in_chan: i64, out_chan: i64) -> nn::Conv2D {
         ConvConfig {
             stride: 2,
             padding: 1,
-            bias: false,
             padding_mode: nn::PaddingMode::Reflect,
             ws_init: Init::Randn {
                 mean: 0.0,
@@ -325,7 +318,6 @@ pub fn unet_conv_transpose(vs: nn::Path, in_chan: i64, out_chan: i64) -> nn::Con
         ConvTransposeConfig {
             stride: 2,
             padding: 1,
-            bias: false,
             ws_init: Init::Randn {
                 mean: 0.0,
                 stdev: 0.02,

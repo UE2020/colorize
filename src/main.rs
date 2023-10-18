@@ -8,6 +8,7 @@ use ndarray::{Array3, ArrayBase, Dim, IxDynImpl, OwnedRepr};
 // use opencv::prelude::MatTraitManual;
 // use opencv::prelude::VideoCaptureTrait;
 // use opencv::prelude::VideoCaptureTraitConst;
+// use opencv::prelude::VideoWriterTrait;
 // use opencv::*;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -322,8 +323,6 @@ fn main() -> Result<()> {
         }
         "video" => {
             // generator_vs.load(&args[2])?;
-            // let window = "Video Display";
-            // highgui::named_window(window, 1)?;
             // let file_name = &args[3];
             // let mut cam = videoio::VideoCapture::from_file(&file_name, videoio::CAP_ANY)?;
             // let opened_file =
@@ -341,17 +340,14 @@ fn main() -> Result<()> {
             // if !opened {
             //     panic!("Unable to open video file!");
             // };
+            // let mut output = videoio::VideoWriter::new("out.mp4", videoio::VideoWriter::fourcc('M', 'J', 'P', 'G')?, cam.get(videoio::CAP_PROP_FPS)?, frame.size()?, true)?;
             // let mut frame_num = 0;
             // loop {
             //     videoio::VideoCapture::read(&mut cam, &mut frame)?;
             //     if frame.size()?.width > 0 {
-            //         if frame_num % 60 == 0 {
-            //             println!("Got a frame!");
-            //             colorize_opencv(&mut frame, &generator_net, device)?;
-            //             highgui::imshow(window, &frame)?;
-            //             #[allow(unused)]
-            //             let key = highgui::wait_key(1000)?;
-            //         }
+            //         println!("Writing frame {}", frame_num);
+            //         colorize_opencv(&mut frame, &generator_net, device)?;
+            //         output.write(&frame)?;
             //         frame_num += 1;
             //     } else {
             //         println!("No more frames!");
