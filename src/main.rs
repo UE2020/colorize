@@ -234,7 +234,7 @@ fn main() -> Result<()> {
                 &generator_vs,
                 match model_path.is_some() {
                     true => 2e-4,
-                    false => 1e-3,
+                    false => 1e-4,
                 },
             )?;
             let mut discriminator_opt = nn::Adam::default()
@@ -292,7 +292,7 @@ fn main() -> Result<()> {
                                 fake_color.l1_loss(&target, tch::Reduction::Mean) * lambda_l1;
                             loss_g_gan + loss_g_l1
                         }
-                        false => fake_color.l1_loss(&target, tch::Reduction::Mean),
+                        false => fake_color.mse_loss(&target, tch::Reduction::Mean),
                     };
 
                     loss_g.backward();
