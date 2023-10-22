@@ -1,11 +1,10 @@
 use tch::nn::{
     conv2d, BatchNormConfig, ConvConfig, ConvTransposeConfig, Init, ModuleT, PaddingMode,
 };
-use tch::{nn, Device, Tensor};
+use tch::{nn, Device, Tensor, TchError, Kind};
 
 mod norm;
 pub mod resnet;
-
 pub struct GANLoss {
     real_label: Tensor,
     fake_label: Tensor,
@@ -338,6 +337,22 @@ pub fn unet_conv_transpose(vs: nn::Path, in_chan: i64, out_chan: i64) -> nn::Con
     )
 }
 
+use std::sync::Mutex;
+use lazy_static::*;
+
+lazy_static! {
+    static ref IMAGENET_MEAN: Mutex<Tensor> =
+        Mutex::new(Tensor::from_slice(&[0.485f32, 0.456, 0.406]).view((3, 1, 1)));
+    static ref IMAGENET_STD: Mutex<Tensor> =
+        Mutex::new(Tensor::from_slice(&[0.229f32, 0.224, 0.225]).view((3, 1, 1)));
+}
+
+pub fn normalize(tensor: &Tensor) -> Result<Tensor, TchError> {
+    let mean = IMAGENET_MEAN.lock().unwrap();
+    let std = IMAGENET_STD.lock().unwrap();
+    (tensor.to_kind(Kind::Float) / 255.0).f_sub(&mean)?.f_div(&std)
+}
+
 pub fn generator_with_backbone(vs: nn::Path, features: i64, out_chan: i64) -> impl ModuleT {
     let down5 = generator_block(&vs / "down5", features * 8, features * 8, true, true, false);
     let down6 = generator_block(&vs / "down6", features * 8, features * 8, true, true, false);
@@ -440,7 +455,7 @@ pub fn generator_with_backbone(vs: nn::Path, features: i64, out_chan: i64) -> im
 
     nn::seq_t()
         .add_fn(|t| {
-            t.expand(&[-1, 3, -1, -1], true)
+            normalize(&t.expand(&[-1, 3, -1, -1], true)).unwrap()
         })
         .add(gen)
 }
