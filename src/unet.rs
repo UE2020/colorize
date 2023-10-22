@@ -455,7 +455,7 @@ pub fn generator_with_backbone(vs: nn::Path, features: i64, out_chan: i64) -> im
 
     nn::seq_t()
         .add_fn(|t| {
-            normalize(&((t.repeat(&[-1, 3, -1, -1]) + 1.0) / 2.0)).unwrap()
+            normalize(&((t.repeat(&[1, 3, 1, 1]) + 1.0) / 2.0)).unwrap()
         })
         .add(gen)
 }
