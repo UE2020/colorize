@@ -241,7 +241,7 @@ fn main() -> Result<()> {
                 .beta1(0.5)
                 .beta2(0.999)
                 .build(&discriminator_vs, 2e-4)?;
-            let mut images = read_dir("/home/tt/Downloads/trailer/frames")?
+            let mut images = read_dir("../frames")?
                 .filter_map(|e| e.ok())
                 .map(|p| p.path().to_string_lossy().into_owned())
                 .collect::<Vec<_>>();
@@ -330,9 +330,9 @@ fn main() -> Result<()> {
             }
         }
         "test" => {
-            //generator_vs.load(&args[2])?;
-            let (l, _) = load_lab(&args[2], true)?;
-            let (full_l, _) = load_lab(&args[2], false)?;
+            generator_vs.load(&args[2])?;
+            let (l, _) = load_lab(&args[3], true)?;
+            let (full_l, _) = load_lab(&args[3], false)?;
             let (_, w, h) = full_l.size3()?;
             tch::no_grad(|| -> anyhow::Result<()> {
                 let in_tensor = &l.unsqueeze(0).to_device(device);
