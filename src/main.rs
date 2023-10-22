@@ -234,7 +234,7 @@ fn main() -> Result<()> {
                 &generator_vs,
                 match model_path.is_some() {
                     true => 2e-4,
-                    false => 1e-4,
+                    false => 1e-3,
                 },
             )?;
             let mut discriminator_opt = nn::Adam::default()
