@@ -1,9 +1,9 @@
 //! A instance-normalization layer.
 #![allow(unused)]
-use tch::Tensor;
+use std::borrow::Borrow;
 use tch::nn;
 use tch::nn::ModuleT;
-use std::borrow::Borrow;
+use tch::Tensor;
 
 /// Instance-normalization config.
 #[derive(Debug, Clone, Copy)]

@@ -204,7 +204,14 @@ fn conv_ae(p: nn::Path) -> impl ModuleT {
 fn main() -> Result<()> {
     let device = Device::cuda_if_available();
     let mut generator_vs = nn::VarStore::new(device);
-    let generator_net = unet::generator(generator_vs.root(), 1, 64, 2);
+    let generator_net = unet::generator_with_backbone(generator_vs.root(), 64, 2);
+    let mut total_vars = 0usize;
+    for var in generator_vs.trainable_variables() {
+        total_vars += var.numel();
+    }
+    println!("Total trainable parameters: {}", total_vars);
+    // let resnet_backbone = unet::resnet::resnet18(&generator_vs.root());
+    // generator_vs.load_partial("./resnet18.ot")?;
     let args = std::env::args().collect::<Vec<_>>();
     match args[1].as_str() {
         "train" => {
@@ -215,21 +222,26 @@ fn main() -> Result<()> {
             let model_path = args.get(2);
             if let Some(model_path) = model_path {
                 generator_vs.load(model_path)?;
+            } else {
+                generator_vs.load_partial("resnet18.ot")?;
             }
             let mut discriminator_vs = nn::VarStore::new(device);
             let lambda_l1 = 100.0;
             let discriminator_net =
                 unet::discriminator(discriminator_vs.root(), 3, &[64, 128, 256, 512]);
             let gan_criterion = unet::GANLoss::new(1.0, 0.0, device);
-            let mut generator_opt = nn::Adam::default()
-                .beta1(0.5)
-                .beta2(0.999)
-                .build(&generator_vs, 2e-4)?;
+            let mut generator_opt = nn::Adam::default().beta1(0.5).beta2(0.999).build(
+                &generator_vs,
+                match model_path.is_some() {
+                    true => 2e-4,
+                    false => 1e-4,
+                },
+            )?;
             let mut discriminator_opt = nn::Adam::default()
                 .beta1(0.5)
                 .beta2(0.999)
                 .build(&discriminator_vs, 2e-4)?;
-            let mut images = read_dir("../frames")?
+            let mut images = read_dir("/home/tt/Downloads/trailer/frames")?
                 .filter_map(|e| e.ok())
                 .map(|p| p.path().to_string_lossy().into_owned())
                 .collect::<Vec<_>>();
@@ -276,14 +288,13 @@ fn main() -> Result<()> {
                     let loss_g = match model_path.is_some() {
                         true => {
                             let loss_g_gan = gan_criterion.forward(&fake_preds, true);
-                            let loss_g_l1 = fake_color.l1_loss(&target, tch::Reduction::Mean) * lambda_l1;
+                            let loss_g_l1 =
+                                fake_color.l1_loss(&target, tch::Reduction::Mean) * lambda_l1;
                             loss_g_gan + loss_g_l1
-                        },
-                        false => {
-                            fake_color.l1_loss(&target, tch::Reduction::Mean)
                         }
+                        false => fake_color.l1_loss(&target, tch::Reduction::Mean),
                     };
-  
+
                     loss_g.backward();
                     generator_opt.step();
                     train_writer.add_scalar("Generator Loss", f32::try_from(loss_g)?, steps as _);
@@ -319,12 +330,13 @@ fn main() -> Result<()> {
             }
         }
         "test" => {
-            generator_vs.load(&args[2])?;
-            let (l, _) = load_lab(&args[3], true)?;
-            let (full_l, _) = load_lab(&args[3], false)?;
+            //generator_vs.load(&args[2])?;
+            let (l, _) = load_lab(&args[2], true)?;
+            let (full_l, _) = load_lab(&args[2], false)?;
             let (_, w, h) = full_l.size3()?;
             tch::no_grad(|| -> anyhow::Result<()> {
-                let out = generator_net.forward_t(&l.unsqueeze(0).to_device(device), false);
+                let in_tensor = &l.unsqueeze(0).to_device(device);
+                let out = generator_net.forward_t(in_tensor, false);
                 let out = out.upsample_bicubic2d([w, h], false, None, None);
                 lab_to_rgb(&full_l.squeeze(), &out.squeeze())?.save("fixed.png")?;
                 lab_to_rgb(
@@ -335,41 +347,87 @@ fn main() -> Result<()> {
                 Ok(())
             })?;
         }
-        "video" => {
-            // generator_vs.load(&args[2])?;
-            // let file_name = &args[3];
-            // let mut cam = videoio::VideoCapture::from_file(&file_name, videoio::CAP_ANY)?;
-            // let opened_file =
-            //     videoio::VideoCapture::open_file(&mut cam, &file_name, videoio::CAP_ANY)?;
-            // if !opened_file {
-            //     panic!("Unable to open video file2!");
-            // };
-            // let mut frame = core::Mat::default();
-            // let frame_read = videoio::VideoCapture::read(&mut cam, &mut frame)?;
-            // if !frame_read {
-            //     panic!("Unable to read from video file!");
-            // };
-            // let opened = videoio::VideoCapture::is_opened(&mut cam)?;
-            // println!("Opened? {}", opened);
-            // if !opened {
-            //     panic!("Unable to open video file!");
-            // };
-            // let mut output = videoio::VideoWriter::new("out.mp4", videoio::VideoWriter::fourcc('M', 'J', 'P', 'G')?, cam.get(videoio::CAP_PROP_FPS)?, frame.size()?, true)?;
-            // let mut frame_num = 0;
-            // loop {
-            //     videoio::VideoCapture::read(&mut cam, &mut frame)?;
-            //     if frame.size()?.width > 0 {
-            //         println!("Writing frame {}", frame_num);
-            //         colorize_opencv(&mut frame, &generator_net, device)?;
-            //         output.write(&frame)?;
-            //         frame_num += 1;
-            //     } else {
-            //         println!("No more frames!");
-            //         videoio::VideoCapture::release(&mut cam)?;
-            //         break ();
-            //     }
-            // }
-        }
+        // "video" => {
+        //     generator_vs.load(&args[2])?;
+        //     let file_name = &args[3];
+        //     let mut cam = videoio::VideoCapture::from_file(&file_name, videoio::CAP_ANY)?;
+        //     let opened_file =
+        //         videoio::VideoCapture::open_file(&mut cam, &file_name, videoio::CAP_ANY)?;
+        //     if !opened_file {
+        //         panic!("Unable to open video file2!");
+        //     };
+        //     let mut frame = core::Mat::default();
+        //     let frame_read = videoio::VideoCapture::read(&mut cam, &mut frame)?;
+        //     if !frame_read {
+        //         panic!("Unable to read from video file!");
+        //     };
+        //     let opened = videoio::VideoCapture::is_opened(&mut cam)?;
+        //     println!("Opened? {}", opened);
+        //     if !opened {
+        //         panic!("Unable to open video file!");
+        //     };
+        //     let mut output = videoio::VideoWriter::new(
+        //         "out.mp4",
+        //         videoio::VideoWriter::fourcc('M', 'J', 'P', 'G')?,
+        //         cam.get(videoio::CAP_PROP_FPS)?,
+        //         frame.size()?,
+        //         true,
+        //     )?;
+        //     let mut frame_num = 0;
+        //     loop {
+        //         videoio::VideoCapture::read(&mut cam, &mut frame)?;
+        //         if frame.size()?.width > 0 {
+        //             println!("Writing frame {}", frame_num);
+        //             colorize_opencv(&mut frame, &generator_net, device)?;
+        //             output.write(&frame)?;
+        //             frame_num += 1;
+        //         } else {
+        //             println!("No more frames!");
+        //             videoio::VideoCapture::release(&mut cam)?;
+        //             break ();
+        //         }
+        //     }
+        // }
+        // "display" => {
+        //     generator_vs.load(&args[2])?;
+        //     let window = "Video Display";
+        //     highgui::named_window(window, 1)?;
+        //     let file_name = &args[3];
+        //     let mut cam = videoio::VideoCapture::from_file(&file_name, videoio::CAP_ANY)?;
+        //     let opened_file =
+        //         videoio::VideoCapture::open_file(&mut cam, &file_name, videoio::CAP_ANY)?;
+        //     if !opened_file {
+        //         panic!("Unable to open video file2!");
+        //     };
+        //     let mut frame = core::Mat::default();
+        //     let frame_read = videoio::VideoCapture::read(&mut cam, &mut frame)?;
+        //     if !frame_read {
+        //         panic!("Unable to read from video file!");
+        //     };
+        //     let opened = videoio::VideoCapture::is_opened(&mut cam)?;
+        //     println!("Opened? {}", opened);
+        //     if !opened {
+        //         panic!("Unable to open video file!");
+        //     };
+        //     let mut frame_num = 0;
+        //     loop {
+        //         videoio::VideoCapture::read(&mut cam, &mut frame)?;
+        //         if frame.size()?.width > 0 {
+        //             if frame_num % 60 == 0 {
+        //                 println!("Got a frame!");
+        //                 colorize_opencv(&mut frame, &generator_net, device)?;
+        //                 highgui::imshow(window, &frame)?;
+        //                 #[allow(unused)]
+        //                 let key = highgui::wait_key(1000)?;
+        //             }
+        //             frame_num += 1;
+        //         } else {
+        //             println!("No more frames!");
+        //             videoio::VideoCapture::release(&mut cam)?;
+        //             break ();
+        //         }
+        //     }
+        // }
         _ => bail!("Usage: (train|test|video) model-path file-path"),
     }
     Ok(())

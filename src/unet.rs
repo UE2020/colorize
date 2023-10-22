@@ -4,6 +4,7 @@ use tch::nn::{
 use tch::{nn, Device, Tensor};
 
 mod norm;
+pub mod resnet;
 
 pub struct GANLoss {
     real_label: Tensor,
@@ -170,6 +171,7 @@ pub fn leaky_relu(slope: f64) -> impl ModuleT {
     nn::func_t(move |xs, _| xs.maximum(&(xs * slope)))
 }
 
+#[allow(unused)]
 pub fn generator(vs: nn::Path, in_chan: i64, features: i64, out_chan: i64) -> impl ModuleT {
     let initial_down = nn::seq_t()
         .add(conv2d(
@@ -334,4 +336,111 @@ pub fn unet_conv_transpose(vs: nn::Path, in_chan: i64, out_chan: i64) -> nn::Con
             ..Default::default()
         },
     )
+}
+
+pub fn generator_with_backbone(vs: nn::Path, features: i64, out_chan: i64) -> impl ModuleT {
+    let down5 = generator_block(&vs / "down5", features * 8, features * 8, true, true, false);
+    let down6 = generator_block(&vs / "down6", features * 8, features * 8, true, true, false);
+    let bottleneck = nn::seq_t()
+        .add(nn::conv2d(
+            &vs / "bottleneck",
+            features * 8,
+            features * 8,
+            4,
+            ConvConfig {
+                stride: 2,
+                padding: 1,
+                ws_init: Init::Randn {
+                    mean: 0.0,
+                    stdev: 0.02,
+                },
+                bs_init: Init::Const(0.0),
+                ..Default::default()
+            },
+        ))
+        .add_fn(|t| t.relu());
+    let up1 = generator_block(&vs / "up1", features * 8, features * 8, false, false, true);
+    let up2 = generator_block(
+        &vs / "up2",
+        features * 8 * 2,
+        features * 8,
+        false,
+        false,
+        true,
+    );
+    let up3 = generator_block(
+        &vs / "up3",
+        features * 8 * 2,
+        features * 8,
+        false,
+        false,
+        true,
+    );
+    let up4 = generator_block(
+        &vs / "up4",
+        features * 8 * 2,
+        features * 8,
+        false,
+        false,
+        false,
+    );
+    let up5 = generator_block(
+        &vs / "up5",
+        features * 8,
+        features * 4,
+        false,
+        false,
+        false,
+    );
+    let up6 = generator_block(
+        &vs / "up6",
+        features * 4,
+        features * 2,
+        false,
+        false,
+        false,
+    );
+    let up7 = generator_block(&vs / "up7", features * 2, features, false, false, false);
+    let final_up = nn::seq_t()
+        .add(nn::conv_transpose2d(
+            &vs / "final_up",
+            features,
+            out_chan,
+            4,
+            ConvTransposeConfig {
+                stride: 2,
+                padding: 1,
+                ws_init: Init::Randn {
+                    mean: 0.0,
+                    stdev: 0.02,
+                },
+                bs_init: Init::Const(0.0),
+                ..Default::default()
+            },
+        ))
+        .add_fn(|t| t.tanh());
+
+    let backbone = resnet::resnet18(&vs);
+
+    let gen = nn::func_t(move |xs, train| {
+        let d5 = backbone.forward_t(xs, train);
+        let d6 = down5.forward_t(&d5, train);
+        let d7 = down6.forward_t(&d6, train);
+        let bottleneck = bottleneck.forward_t(&d7, train);
+        let up1 = up1.forward_t(&bottleneck, train);
+        let up2 = up2.forward_t(&Tensor::cat(&[up1, d7], 1), train);
+        let up3 = up3.forward_t(&Tensor::cat(&[up2, d6], 1), train);
+        let up4 = up4.forward_t(&Tensor::cat(&[up3, d5], 1), train);
+        let up5 = up5.forward_t(&up4, train);
+        let up6 = up6.forward_t(&up5, train);
+        let up7 = up7.forward_t(&up6, train);
+        let out = final_up.forward_t(&up7, train);
+        out
+    });
+
+    nn::seq_t()
+        .add_fn(|t| {
+            t.expand(&[-1, 3, -1, -1], true)
+        })
+        .add(gen)
 }
