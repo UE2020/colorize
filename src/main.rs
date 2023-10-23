@@ -313,7 +313,7 @@ fn main() -> Result<()> {
                         );
                     }
 
-                    if steps % 1000 == 0 && model_path.is_some() {
+                    if steps % 200 == 0 && model_path.is_some() {
                         generator_vs.save(&format!("checkpoint{}.safetensors", steps))?;
                     }
                 }
