@@ -312,6 +312,10 @@ fn main() -> Result<()> {
                             0,
                         );
                     }
+
+                    if steps % 1000 == 0 && model_path.is_some() {
+                        generator_vs.save(&format!("checkpoint{}.safetensors", steps))?;
+                    }
                 }
                 // for images in test_images.chunks(16) {
                 //     test_steps += 1;
@@ -335,8 +339,7 @@ fn main() -> Result<()> {
             let (full_l, _) = load_lab(&args[3], false)?;
             let (_, w, h) = full_l.size3()?;
             tch::no_grad(|| -> anyhow::Result<()> {
-                let in_tensor = &l.unsqueeze(0).to_device(device);
-                let out = generator_net.forward_t(in_tensor, false);
+                let out = generator_net.forward_t(&l.unsqueeze(0).to_device(device), true);
                 let out = out.upsample_bicubic2d([w, h], false, None, None);
                 lab_to_rgb(&full_l.squeeze(), &out.squeeze())?.save("fixed.png")?;
                 lab_to_rgb(
