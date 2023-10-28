@@ -1,10 +1,276 @@
-use tch::nn::{
-    conv2d, BatchNormConfig, ConvConfig, ConvTransposeConfig, Init, ModuleT, PaddingMode,
-};
-use tch::{nn, Device, Kind, TchError, Tensor};
+use tch::nn::{conv_transpose2d, ConvConfig, ConvTransposeConfig, ModuleT, Init, BatchNormConfig};
+use tch::{nn, Tensor, Device};
 
-mod norm;
-pub mod resnet;
+#[derive(Debug)]
+pub struct UnetBlock {
+    seq: nn::SequentialT,
+    outermost: bool,
+}
+
+impl UnetBlock {
+    pub fn new(
+        p: nn::Path,
+        nf: usize,
+        ni: usize,
+        submodule: Option<UnetBlock>,
+        input_c: Option<usize>,
+        dropout: bool,
+        innermost: bool,
+        outermost: bool,
+    ) -> Self {
+        let input_c = input_c.unwrap_or(nf);
+        let mut seq = nn::seq_t();
+        let downconv = nn::conv2d(
+            &p / "downconv",
+            input_c as _,
+            ni as _,
+            4,
+            ConvConfig {
+                stride: 2,
+                padding: 1,
+                bias: false,
+                ws_init: Init::Randn { mean: 0.0, stdev: 0.02 },
+                bs_init: Init::Const(0.0),
+                ..Default::default()
+            },
+        );
+        let downnorm = nn::batch_norm2d(&p / "downnorm", ni as _, BatchNormConfig {
+            ws_init: Init::Randn { mean: 1.0, stdev: 0.02 },
+            bs_init: Init::Const(0.0),
+            ..Default::default()
+        });
+        let upnorm = nn::batch_norm2d(&p / "upnorm", nf as _, BatchNormConfig {
+            ws_init: Init::Randn { mean: 1.0, stdev: 0.02 },
+            bs_init: Init::Const(0.0),
+            ..Default::default()
+        });
+        if outermost {
+            let upconv = conv_transpose2d(
+                &p / "upconv",
+                ni as i64 * 2,
+                nf as _,
+                4,
+                ConvTransposeConfig {
+                    stride: 2,
+                    padding: 1,
+                    ws_init: Init::Randn { mean: 0.0, stdev: 0.02 },
+                    bs_init: Init::Const(0.0),
+                    ..Default::default()
+                },
+            );
+            seq = seq.add(downconv);
+            if let Some(submodule) = submodule {
+                seq = seq.add(submodule);
+            }
+            seq = seq.add_fn(|t| t.relu());
+            seq = seq.add(upconv);
+            seq = seq.add_fn(|t| t.tanh());
+        } else if innermost {
+            let upconv = conv_transpose2d(
+                &p / "upconv",
+                ni as _,
+                nf as _,
+                4,
+                ConvTransposeConfig {
+                    stride: 2,
+                    padding: 1,
+                    bias: false,
+                    ws_init: Init::Randn { mean: 0.0, stdev: 0.02 },
+                    bs_init: Init::Const(0.0),
+                    ..Default::default()
+                },
+            );
+            seq = seq.add_fn(|t| t.maximum(&(t * 0.2))); // leaky relu
+            seq = seq.add(downconv);
+            seq = seq.add_fn(|t| t.relu());
+            seq = seq.add(upconv);
+            seq = seq.add(upnorm);
+        } else {
+            let upconv = conv_transpose2d(
+                &p / "upconv",
+                ni as i64 * 2,
+                nf as _,
+                4,
+                ConvTransposeConfig {
+                    stride: 2,
+                    padding: 1,
+                    bias: false,
+                    ws_init: Init::Randn { mean: 0.0, stdev: 0.02 },
+                    bs_init: Init::Const(0.0),
+                    ..Default::default()
+                },
+            );
+            seq = seq.add_fn(|t| t.maximum(&(t * 0.2))); // leaky relu
+            seq = seq.add(downconv);
+            seq = seq.add(downnorm);
+            if let Some(submodule) = submodule {
+                seq = seq.add(submodule);
+            }
+            seq = seq.add_fn(|t| t.relu());
+            seq = seq.add(upconv);
+            seq = seq.add(upnorm);
+            if dropout {
+                seq = seq.add_fn_t(|t, _| t.dropout(0.5, true));
+            }
+        }
+
+        Self { seq, outermost }
+    }
+
+    pub fn forward(&self, xs: &Tensor, train: bool) -> Tensor {
+        if self.outermost {
+            self.seq.forward_t(xs, train)
+        } else {
+            Tensor::cat(&[xs.shallow_clone(), self.seq.forward_t(xs, train)], 1)
+        }
+    }
+}
+
+impl ModuleT for UnetBlock {
+    fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
+        self.forward(xs, train)
+    }
+}
+
+pub fn unet(
+    p: nn::Path,
+    input_c: usize,
+    output_c: usize,
+    n_down: usize,
+    num_filters: usize,
+) -> impl ModuleT {
+    let mut block = UnetBlock::new(
+        &p / "initial_block",
+        num_filters * 8,
+        num_filters * 8,
+        None,
+        None,
+        false,
+        true,
+        false,
+    );
+    for i in 0..(n_down - 5) {
+        block = UnetBlock::new(
+            &p / &format!("block1-{}", i),
+            num_filters * 8,
+            num_filters * 8,
+            Some(block),
+            None,
+            true,
+            false,
+            false,
+        );
+    }
+    let mut out_filters = num_filters * 8;
+    for i in 0..3 {
+        block = UnetBlock::new(
+            &p / &format!("block2-{}", i),
+            out_filters / 2,
+            out_filters,
+            Some(block),
+            None,
+            false,
+            false,
+            false,
+        );
+        out_filters /= 2;
+    }
+    block = UnetBlock::new(
+        &p / "final_block",
+        output_c,
+        out_filters,
+        Some(block),
+        Some(input_c),
+        false,
+        false,
+        true,
+    );
+    nn::func_t(move |xs, train| block.forward_t(xs, train))
+}
+
+#[derive(Debug)]
+pub struct PatchDiscriminator {
+    seq: nn::SequentialT,
+}
+
+impl PatchDiscriminator {
+    pub fn new(p: nn::Path, input_c: usize, num_filters: usize, n_down: usize) -> Self {
+        let mut seq = nn::seq_t().add(Self::get_layers(
+            &p / "initial",
+            input_c,
+            num_filters,
+            4,
+            2,
+            1,
+            false,
+            true,
+        ));
+        for i in 0..n_down {
+            seq = seq.add(Self::get_layers(
+                &p / &format!("{}", i),
+                num_filters * 2_usize.pow(i as u32),
+                num_filters * 2_usize.pow(i as u32 + 1),
+                4,
+                if i == (n_down - 1) { 1 } else { 2 },
+                1,
+                true,
+                true,
+            ));
+        }
+        seq = seq.add(Self::get_layers(&p / "final", num_filters * 2_usize.pow(n_down as u32), 1, 4, 1, 1, false, false));
+        Self {
+            seq
+        }
+    }
+
+    pub fn get_layers(
+        p: nn::Path,
+        ni: usize,
+        nf: usize,
+        k: usize,
+        stride: usize,
+        pad: usize,
+        norm: bool,
+        act: bool,
+    ) -> nn::SequentialT {
+        let mut seq = nn::seq_t().add(nn::conv2d(
+            &p / "input",
+            ni as _,
+            nf as _,
+            k as _,
+            ConvConfig {
+                stride: stride as _,
+                padding: pad as _,
+                bias: !norm,
+                ws_init: Init::Randn { mean: 0.0, stdev: 0.02 },
+                bs_init: Init::Const(0.0),
+                ..Default::default()
+            },
+        ));
+        if norm {
+            seq = seq.add(nn::batch_norm2d(&p / "norm", nf as _, BatchNormConfig {
+                ws_init: Init::Randn { mean: 1.0, stdev: 0.02 },
+                bs_init: Init::Const(0.0),
+                ..Default::default()
+            }))
+        }
+        if act {
+            seq = seq.add_fn(|t| t.maximum(&(t * 0.2))); // leaky relu
+        }
+        seq
+    }
+
+    pub fn forward(&self, xs: &Tensor, train: bool) -> Tensor {
+        self.seq.forward_t(xs, train)
+    }
+}
+
+impl ModuleT for PatchDiscriminator {
+    fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
+        self.forward(xs, train)
+    }
+}
+
 pub struct GANLoss {
     real_label: Tensor,
     fake_label: Tensor,
@@ -28,426 +294,7 @@ impl GANLoss {
 
     pub fn forward(&self, preds: &Tensor, is_real: bool) -> Tensor {
         let labels = self.get_labels(preds, is_real);
-        let loss = preds.binary_cross_entropy_with_logits::<Tensor>(
-            &labels,
-            None,
-            None,
-            tch::Reduction::Mean,
-        );
+        let loss = preds.binary_cross_entropy_with_logits::<Tensor>(&labels, None, None, tch::Reduction::Mean);
         loss
     }
-}
-
-pub fn discriminator_block(vs: nn::Path, in_chan: i64, out_chan: i64, stride: i64) -> impl ModuleT {
-    nn::seq_t()
-        .add(nn::conv2d(
-            &vs / "conv2d",
-            in_chan,
-            out_chan,
-            4,
-            ConvConfig {
-                stride,
-                padding: 1,
-                bias: false,
-                padding_mode: PaddingMode::Reflect,
-                ws_init: Init::Randn {
-                    mean: 0.0,
-                    stdev: 0.02,
-                },
-                bs_init: Init::Const(0.0),
-                ..Default::default()
-            },
-        ))
-        .add(nn::batch_norm2d(
-            &vs / "batchnorm",
-            out_chan,
-            BatchNormConfig {
-                ws_init: Init::Randn {
-                    mean: 1.0,
-                    stdev: 0.02,
-                },
-                bs_init: Init::Const(0.0),
-                ..Default::default()
-            },
-        ))
-        .add(leaky_relu(0.2))
-}
-
-pub fn discriminator(vs: nn::Path, in_chan: i64, features: &[i64]) -> impl ModuleT {
-    let initial = nn::seq_t()
-        .add(nn::conv2d(
-            &vs / "initial",
-            in_chan,
-            features[0],
-            4,
-            ConvConfig {
-                stride: 2,
-                padding: 1,
-                padding_mode: PaddingMode::Reflect,
-                ws_init: Init::Randn {
-                    mean: 0.0,
-                    stdev: 0.02,
-                },
-                bs_init: Init::Const(0.0),
-                ..Default::default()
-            },
-        ))
-        .add(leaky_relu(0.2));
-    let mut layers = nn::seq_t();
-    let mut in_chan = features[0];
-    for (i, feature) in features[1..].iter().enumerate() {
-        layers = layers.add(discriminator_block(
-            &vs / &format!("layer{}", i),
-            in_chan,
-            *feature,
-            if feature == features.last().unwrap() {
-                1
-            } else {
-                2
-            },
-        ));
-        in_chan = *feature;
-    }
-
-    initial.add(layers.add(nn::conv2d(
-        &vs / "final",
-        in_chan,
-        1,
-        4,
-        ConvConfig {
-            stride: 1,
-            padding: 1,
-            padding_mode: PaddingMode::Reflect,
-            ws_init: Init::Randn {
-                mean: 0.0,
-                stdev: 0.02,
-            },
-            bs_init: Init::Const(0.0),
-            ..Default::default()
-        },
-    )))
-}
-
-pub fn generator_block(
-    vs: nn::Path,
-    in_chan: i64,
-    out_chan: i64,
-    down: bool,
-    leaky: bool,
-    dropout: bool,
-) -> impl ModuleT {
-    let seq = match down {
-        true => nn::seq_t().add(unet_conv(&vs / "conv2d", in_chan, out_chan)),
-        false => nn::seq_t().add(unet_conv_transpose(
-            &vs / "convtranspose2d",
-            in_chan,
-            out_chan,
-        )),
-    }
-    .add(nn::batch_norm2d(
-        &vs / "batchnorm",
-        out_chan,
-        BatchNormConfig {
-            ws_init: Init::Randn {
-                mean: 1.0,
-                stdev: 0.02,
-            },
-            bs_init: Init::Const(0.0),
-            ..Default::default()
-        },
-    ))
-    .add_fn(match leaky {
-        true => |t: &Tensor| t.maximum(&(t * 0.2)),
-        false => |t: &Tensor| t.relu(),
-    });
-    match dropout {
-        true => seq.add_fn_t(|t, _| t.dropout(0.5, true)),
-        false => seq,
-    }
-}
-
-pub fn leaky_relu(slope: f64) -> impl ModuleT {
-    nn::func_t(move |xs, _| xs.maximum(&(xs * slope)))
-}
-
-#[allow(unused)]
-pub fn generator(vs: nn::Path, in_chan: i64, features: i64, out_chan: i64) -> impl ModuleT {
-    let initial_down = nn::seq_t()
-        .add(conv2d(
-            &vs / "initial_conv",
-            in_chan,
-            features,
-            4,
-            ConvConfig {
-                stride: 2,
-                padding: 1,
-                padding_mode: nn::PaddingMode::Reflect,
-                ws_init: Init::Randn {
-                    mean: 0.0,
-                    stdev: 0.02,
-                },
-                bs_init: Init::Const(0.0),
-                ..Default::default()
-            },
-        ))
-        .add(leaky_relu(0.2));
-    let down1 = generator_block(&vs / "down1", features, features * 2, true, true, false);
-    let down2 = generator_block(&vs / "down2", features * 2, features * 4, true, true, false);
-    let down3 = generator_block(&vs / "down3", features * 4, features * 8, true, true, false);
-    let down4 = generator_block(&vs / "down4", features * 8, features * 8, true, true, false);
-    let down5 = generator_block(&vs / "down5", features * 8, features * 8, true, true, false);
-    let down6 = generator_block(&vs / "down6", features * 8, features * 8, true, true, false);
-    let bottleneck = nn::seq_t()
-        .add(nn::conv2d(
-            &vs / "bottleneck",
-            features * 8,
-            features * 8,
-            4,
-            ConvConfig {
-                stride: 2,
-                padding: 1,
-                ws_init: Init::Randn {
-                    mean: 0.0,
-                    stdev: 0.02,
-                },
-                bs_init: Init::Const(0.0),
-                ..Default::default()
-            },
-        ))
-        .add_fn(|t| t.relu());
-    let up1 = generator_block(&vs / "up1", features * 8, features * 8, false, false, true);
-    let up2 = generator_block(
-        &vs / "up2",
-        features * 8 * 2,
-        features * 8,
-        false,
-        false,
-        true,
-    );
-    let up3 = generator_block(
-        &vs / "up3",
-        features * 8 * 2,
-        features * 8,
-        false,
-        false,
-        true,
-    );
-    let up4 = generator_block(
-        &vs / "up4",
-        features * 8 * 2,
-        features * 8,
-        false,
-        false,
-        false,
-    );
-    let up5 = generator_block(
-        &vs / "up5",
-        features * 8 * 2,
-        features * 4,
-        false,
-        false,
-        false,
-    );
-    let up6 = generator_block(
-        &vs / "up6",
-        features * 4 * 2,
-        features * 2,
-        false,
-        false,
-        false,
-    );
-    let up7 = generator_block(&vs / "up7", features * 2 * 2, features, false, false, false);
-    let final_up = nn::seq_t()
-        .add(nn::conv_transpose2d(
-            &vs / "final_up",
-            features * 2,
-            out_chan,
-            4,
-            ConvTransposeConfig {
-                stride: 2,
-                padding: 1,
-                ws_init: Init::Randn {
-                    mean: 0.0,
-                    stdev: 0.02,
-                },
-                bs_init: Init::Const(0.0),
-                ..Default::default()
-            },
-        ))
-        .add_fn(|t| t.tanh());
-    nn::func_t(move |xs, train| {
-        let d1 = initial_down.forward_t(&xs, train);
-        let d2 = down1.forward_t(&d1, train);
-        let d3 = down2.forward_t(&d2, train);
-        let d4 = down3.forward_t(&d3, train);
-        let d5 = down4.forward_t(&d4, train);
-        let d6 = down5.forward_t(&d5, train);
-        let d7 = down6.forward_t(&d6, train);
-        let bottleneck = bottleneck.forward_t(&d7, train);
-        let up1 = up1.forward_t(&bottleneck, train);
-        let up2 = up2.forward_t(&Tensor::cat(&[up1, d7], 1), train);
-        let up3 = up3.forward_t(&Tensor::cat(&[up2, d6], 1), train);
-        let up4 = up4.forward_t(&Tensor::cat(&[up3, d5], 1), train);
-        let up5 = up5.forward_t(&Tensor::cat(&[up4, d4], 1), train);
-        let up6 = up6.forward_t(&Tensor::cat(&[up5, d3], 1), train);
-        let up7 = up7.forward_t(&Tensor::cat(&[up6, d2], 1), train);
-        let out = final_up.forward_t(&Tensor::cat(&[up7, d1], 1), train);
-        out
-    })
-}
-
-pub fn unet_conv(vs: nn::Path, in_chan: i64, out_chan: i64) -> nn::Conv2D {
-    nn::conv2d(
-        vs,
-        in_chan,
-        out_chan,
-        4,
-        ConvConfig {
-            stride: 2,
-            padding: 1,
-            bias: false,
-            padding_mode: nn::PaddingMode::Reflect,
-            ws_init: Init::Randn {
-                mean: 0.0,
-                stdev: 0.02,
-            },
-            bs_init: Init::Const(0.0),
-            ..Default::default()
-        },
-    )
-}
-
-pub fn unet_conv_transpose(vs: nn::Path, in_chan: i64, out_chan: i64) -> nn::ConvTranspose2D {
-    nn::conv_transpose2d(
-        vs,
-        in_chan,
-        out_chan,
-        4,
-        ConvTransposeConfig {
-            stride: 2,
-            padding: 1,
-            bias: false,
-            ws_init: Init::Randn {
-                mean: 0.0,
-                stdev: 0.02,
-            },
-            bs_init: Init::Const(0.0),
-            ..Default::default()
-        },
-    )
-}
-
-use lazy_static::*;
-use std::sync::Mutex;
-
-lazy_static! {
-    static ref IMAGENET_MEAN: Mutex<Tensor> = Mutex::new(
-        Tensor::from_slice(&[0.485f32, 0.456, 0.406])
-            .view((3, 1, 1))
-            .to_device(Device::cuda_if_available())
-    );
-    static ref IMAGENET_STD: Mutex<Tensor> = Mutex::new(
-        Tensor::from_slice(&[0.229f32, 0.224, 0.225])
-            .view((3, 1, 1))
-            .to_device(Device::cuda_if_available())
-    );
-}
-
-pub fn normalize(tensor: &Tensor) -> Result<Tensor, TchError> {
-    let mean = IMAGENET_MEAN.lock().unwrap();
-    let std = IMAGENET_STD.lock().unwrap();
-    (tensor.to_kind(Kind::Float) / 255.0)
-        .f_sub(&mean)?
-        .f_div(&std)
-}
-
-pub fn generator_with_backbone(vs: nn::Path, features: i64, out_chan: i64) -> impl ModuleT {
-    let down5 = generator_block(&vs / "down5", features * 8, features * 8, true, true, false);
-    let down6 = generator_block(&vs / "down6", features * 8, features * 8, true, true, false);
-    let bottleneck = nn::seq_t()
-        .add(nn::conv2d(
-            &vs / "bottleneck",
-            features * 8,
-            features * 8,
-            4,
-            ConvConfig {
-                stride: 2,
-                padding: 1,
-                ws_init: Init::Randn {
-                    mean: 0.0,
-                    stdev: 0.02,
-                },
-                bs_init: Init::Const(0.0),
-                ..Default::default()
-            },
-        ))
-        .add_fn(|t| t.relu());
-    let up1 = generator_block(&vs / "up1", features * 8, features * 8, false, false, true);
-    let up2 = generator_block(
-        &vs / "up2",
-        features * 8 * 2,
-        features * 8,
-        false,
-        false,
-        true,
-    );
-    let up3 = generator_block(
-        &vs / "up3",
-        features * 8 * 2,
-        features * 8,
-        false,
-        false,
-        true,
-    );
-    let up4 = generator_block(
-        &vs / "up4",
-        features * 8 * 2,
-        features * 8,
-        false,
-        false,
-        false,
-    );
-    let up5 = generator_block(&vs / "up5", features * 8, features * 4, false, false, false);
-    let up6 = generator_block(&vs / "up6", features * 4, features * 2, false, false, false);
-    let up7 = generator_block(&vs / "up7", features * 2, features, false, false, false);
-    let final_up = nn::seq_t()
-        .add(nn::conv_transpose2d(
-            &vs / "final_up",
-            features,
-            out_chan,
-            4,
-            ConvTransposeConfig {
-                stride: 2,
-                padding: 1,
-                ws_init: Init::Randn {
-                    mean: 0.0,
-                    stdev: 0.02,
-                },
-                bs_init: Init::Const(0.0),
-                ..Default::default()
-            },
-        ))
-        .add_fn(|t| t.tanh());
-
-    let backbone = resnet::resnet18(&vs);
-
-    let gen = nn::func_t(move |xs, train| {
-        let d5 = backbone.forward_t(xs, train);
-        let d6 = down5.forward_t(&d5, train);
-        let d7 = down6.forward_t(&d6, train);
-        let bottleneck = bottleneck.forward_t(&d7, train);
-        let up1 = up1.forward_t(&bottleneck, train);
-        let up2 = up2.forward_t(&Tensor::cat(&[up1, d7], 1), train);
-        let up3 = up3.forward_t(&Tensor::cat(&[up2, d6], 1), train);
-        let up4 = up4.forward_t(&Tensor::cat(&[up3, d5], 1), train);
-        let up5 = up5.forward_t(&up4, train);
-        let up6 = up6.forward_t(&up5, train);
-        let up7 = up7.forward_t(&up6, train);
-        let out = final_up.forward_t(&up7, train);
-        out
-    });
-
-    nn::seq_t()
-        .add_fn(|t| normalize(&((t.repeat(&[1, 3, 1, 1]) + 1.0) / 2.0)).unwrap())
-        .add(gen)
 }
