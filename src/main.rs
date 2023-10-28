@@ -249,7 +249,8 @@ fn main() -> Result<()> {
                         .map(|img_path| load(img_path).expect("failed to open image").unsqueeze(0)).collect();
                     let (input, target) = convert_lab(&rgb2lab, &Tensor::cat(&xs, 0))?;
                     let target = target.to_device(device);
-                    let fake_color = generator_net.forward_t(&input.to_device(device), true);
+                    let input = input.to_device(device);
+                    let fake_color = generator_net.forward_t(&input, true);
                     // optimize discriminator
                     discriminator_vs.unfreeze();
                     discriminator_opt.zero_grad();
