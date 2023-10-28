@@ -1,7 +1,7 @@
 use tch::nn::{
     conv2d, BatchNormConfig, ConvConfig, ConvTransposeConfig, Init, ModuleT, PaddingMode,
 };
-use tch::{nn, Device, Tensor, TchError, Kind};
+use tch::{nn, Device, Kind, TchError, Tensor};
 
 mod norm;
 pub mod resnet;
@@ -337,20 +337,28 @@ pub fn unet_conv_transpose(vs: nn::Path, in_chan: i64, out_chan: i64) -> nn::Con
     )
 }
 
-use std::sync::Mutex;
 use lazy_static::*;
+use std::sync::Mutex;
 
 lazy_static! {
-    static ref IMAGENET_MEAN: Mutex<Tensor> =
-        Mutex::new(Tensor::from_slice(&[0.485f32, 0.456, 0.406]).view((3, 1, 1)).to_device(Device::cuda_if_available()));
-    static ref IMAGENET_STD: Mutex<Tensor> =
-        Mutex::new(Tensor::from_slice(&[0.229f32, 0.224, 0.225]).view((3, 1, 1)).to_device(Device::cuda_if_available()));
+    static ref IMAGENET_MEAN: Mutex<Tensor> = Mutex::new(
+        Tensor::from_slice(&[0.485f32, 0.456, 0.406])
+            .view((3, 1, 1))
+            .to_device(Device::cuda_if_available())
+    );
+    static ref IMAGENET_STD: Mutex<Tensor> = Mutex::new(
+        Tensor::from_slice(&[0.229f32, 0.224, 0.225])
+            .view((3, 1, 1))
+            .to_device(Device::cuda_if_available())
+    );
 }
 
 pub fn normalize(tensor: &Tensor) -> Result<Tensor, TchError> {
     let mean = IMAGENET_MEAN.lock().unwrap();
     let std = IMAGENET_STD.lock().unwrap();
-    (tensor.to_kind(Kind::Float) / 255.0).f_sub(&mean)?.f_div(&std)
+    (tensor.to_kind(Kind::Float) / 255.0)
+        .f_sub(&mean)?
+        .f_div(&std)
 }
 
 pub fn generator_with_backbone(vs: nn::Path, features: i64, out_chan: i64) -> impl ModuleT {
@@ -399,22 +407,8 @@ pub fn generator_with_backbone(vs: nn::Path, features: i64, out_chan: i64) -> im
         false,
         false,
     );
-    let up5 = generator_block(
-        &vs / "up5",
-        features * 8,
-        features * 4,
-        false,
-        false,
-        false,
-    );
-    let up6 = generator_block(
-        &vs / "up6",
-        features * 4,
-        features * 2,
-        false,
-        false,
-        false,
-    );
+    let up5 = generator_block(&vs / "up5", features * 8, features * 4, false, false, false);
+    let up6 = generator_block(&vs / "up6", features * 4, features * 2, false, false, false);
     let up7 = generator_block(&vs / "up7", features * 2, features, false, false, false);
     let final_up = nn::seq_t()
         .add(nn::conv_transpose2d(
@@ -454,8 +448,6 @@ pub fn generator_with_backbone(vs: nn::Path, features: i64, out_chan: i64) -> im
     });
 
     nn::seq_t()
-        .add_fn(|t| {
-            normalize(&((t.repeat(&[1, 3, 1, 1]) + 1.0) / 2.0)).unwrap()
-        })
+        .add_fn(|t| normalize(&((t.repeat(&[1, 3, 1, 1]) + 1.0) / 2.0)).unwrap())
         .add(gen)
 }

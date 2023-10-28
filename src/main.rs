@@ -12,32 +12,35 @@ use ndarray::{Array3, ArrayBase, Dim, IxDynImpl, OwnedRepr};
 // use opencv::*;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use tch::vision::image::{load_and_resize, load};
 use std::fs::{read_dir, remove_dir_all};
 use std::path::Path;
-use tch::nn::{ConvConfig, ConvTransposeConfig, ModuleT, OptimizerConfig};
-use tch::{nn, Device, Kind, Tensor};
+use tch::nn::{ConvConfig, ConvTransposeConfig, ModuleT, OptimizerConfig, Module};
+use tch::{nn, Device, Kind, Tensor, CModule, IndexOp};
 use tensorboard_rs as tensorboard;
 
 mod unet;
 
 /// Returns (L, ab)
-fn load_lab(img: impl AsRef<Path>, resize: bool) -> Result<(Tensor, Tensor)> {
-    let mut img = image::open(img)?;
-    if resize {
-        img = img.resize_exact(256, 256, Lanczos3)
-    }
-    let img = img.to_rgb8();
-    let (w, h) = img.dimensions();
-    let mut l: Array3<f32> = ndarray::ArrayBase::zeros((1, w as usize, h as usize));
-    let mut ab: Array3<f32> = ndarray::ArrayBase::zeros((2, w as usize, h as usize));
-    for (x, y, pixel) in img.enumerate_pixels() {
-        let lab = Lab::from_rgb(&[pixel[0], pixel[1], pixel[2]]);
-        l[[0, x as usize, y as usize]] = (((lab.l) / 100.) - 0.5) * 2.0;
-        ab[[0, x as usize, y as usize]] = (((lab.a + 128.0) / 255.) - 0.5) * 2.0;
-        ab[[1, x as usize, y as usize]] = (((lab.b + 128.0) / 255.) - 0.5) * 2.0;
-    }
-    let l: Tensor = l.try_into()?;
-    let ab: Tensor = ab.try_into()?;
+fn load_lab(rgb2lab: &CModule, img: impl AsRef<Path>, resize: bool) -> Result<(Tensor, Tensor)> {
+    let img = if resize {
+        load_and_resize(img, 256, 256)?
+    } else {
+        load(img)?
+    };
+    let img = img.to_kind(Kind::Float) / 255.0;
+    let lab = rgb2lab.forward(&img.unsqueeze(0));
+    let l = lab.i((.., (0..1), .., ..)) / 50.0 - 1.0;
+    let ab = lab.i((.., (1..3), .., ..)) / 110.;
+    Ok((l, ab))
+}
+
+/// Returns (L, ab)
+fn convert_lab(rgb2lab: &CModule, xs: &Tensor) -> Result<(Tensor, Tensor)> {
+    let img = xs.to_kind(Kind::Float) / 255.0;
+    let lab = rgb2lab.forward(&img);
+    let l = lab.i((.., (0..1), .., ..)) / 50.0 - 1.0;
+    let ab = lab.i((.., (1..3), .., ..)) / 110.;
     Ok((l, ab))
 }
 
@@ -63,7 +66,7 @@ fn load_lab(img: impl AsRef<Path>, resize: bool) -> Result<(Tensor, Tensor)> {
 //             None,
 //             None,
 //         );
-//         let out = net.forward_t(&resized_l, false);
+//         let out = net.forward_t(&resized_l, true);
 //         let out = out
 //             .upsample_bicubic2d([w as i64, h as i64], false, None, None)
 //             .squeeze();
@@ -204,14 +207,13 @@ fn conv_ae(p: nn::Path) -> impl ModuleT {
 fn main() -> Result<()> {
     let device = Device::cuda_if_available();
     let mut generator_vs = nn::VarStore::new(device);
-    let generator_net = unet::generator_with_backbone(generator_vs.root(), 64, 2);
+    let generator_net = unet::generator(generator_vs.root(), 1, 64, 2);
     let mut total_vars = 0usize;
     for var in generator_vs.trainable_variables() {
         total_vars += var.numel();
     }
     println!("Total trainable parameters: {}", total_vars);
-    // let resnet_backbone = unet::resnet::resnet18(&generator_vs.root());
-    // generator_vs.load_partial("./resnet18.ot")?;
+    let rgb2lab = CModule::load("rgb2lab.pt")?;
     let args = std::env::args().collect::<Vec<_>>();
     match args[1].as_str() {
         "train" => {
@@ -219,24 +221,15 @@ fn main() -> Result<()> {
             let mut train_writer =
                 tensorboard::summary_writer::SummaryWriter::new("./logdir/train");
             //let mut test_writer = tensorboard::summary_writer::SummaryWriter::new("./logdir/test");
-            let model_path = args.get(2);
-            if let Some(model_path) = model_path {
-                generator_vs.load(model_path)?;
-            } else {
-                generator_vs.load_partial("resnet18.ot")?;
-            }
             let mut discriminator_vs = nn::VarStore::new(device);
             let lambda_l1 = 100.0;
             let discriminator_net =
                 unet::discriminator(discriminator_vs.root(), 3, &[64, 128, 256, 512]);
             let gan_criterion = unet::GANLoss::new(1.0, 0.0, device);
-            let mut generator_opt = nn::Adam::default().beta1(0.5).beta2(0.999).build(
-                &generator_vs,
-                match model_path.is_some() {
-                    true => 2e-4,
-                    false => 1e-4,
-                },
-            )?;
+            let mut generator_opt = nn::Adam::default()
+                .beta1(0.5)
+                .beta2(0.999)
+                .build(&generator_vs, 2e-4)?;
             let mut discriminator_opt = nn::Adam::default()
                 .beta1(0.5)
                 .beta2(0.999)
@@ -249,57 +242,50 @@ fn main() -> Result<()> {
             //let mut test_steps = 0usize;
             for epoch in 1..=8 {
                 images.shuffle(&mut thread_rng());
-                for images in images.chunks(16) {
+                for images in images.chunks(8) {
                     steps += 1;
-                    let (inputs, outputs): (Vec<_>, Vec<_>) = images
+                    let xs: Vec<_> = images
                         .into_iter()
-                        .map(|img_path| load_lab(img_path, true).expect("failed to open image"))
-                        .unzip();
-                    let input = Tensor::stack(&inputs, 0).to(device);
-                    let target = Tensor::stack(&outputs, 0).to(device);
+                        .map(|img_path| load(img_path).expect("failed to open image").unsqueeze(0)).collect();
+                    let (input, target) = convert_lab(&rgb2lab, &Tensor::cat(&xs, 0))?;
                     let fake_color = generator_net.forward_t(&input, true);
-                    // optimize discriminator, only if we're not in the pre-training stage
-                    if model_path.is_some() {
-                        discriminator_vs.unfreeze();
-                        discriminator_opt.zero_grad();
-                        let fake_image =
-                            Tensor::cat(&[input.shallow_clone(), fake_color.shallow_clone()], 1);
-                        let fake_preds = discriminator_net.forward_t(&fake_image.detach(), true);
-                        let loss_d_fake = gan_criterion.forward(&fake_preds, false);
-                        let real_image =
-                            Tensor::cat(&[input.shallow_clone(), target.shallow_clone()], 1);
-                        let real_preds = discriminator_net.forward_t(&real_image, true);
-                        let loss_d_real = gan_criterion.forward(&real_preds, true);
-                        let loss_d = (loss_d_fake + loss_d_real) * 0.5;
-                        loss_d.backward();
-                        discriminator_opt.step();
-                        train_writer.add_scalar(
-                            "Discriminator Loss",
-                            f32::try_from(loss_d)?,
-                            steps as _,
-                        );
-                    }
+                    // optimize discriminator
+                    discriminator_vs.unfreeze();
+                    discriminator_opt.zero_grad();
+                    let fake_image =
+                        Tensor::cat(&[input.shallow_clone(), fake_color.shallow_clone()], 1);
+                    let fake_preds = discriminator_net.forward_t(&fake_image.detach(), true);
+                    let loss_d_fake = gan_criterion.forward(&fake_preds, false);
+                    let real_image =
+                        Tensor::cat(&[input.shallow_clone(), target.shallow_clone()], 1);
+                    let real_preds = discriminator_net.forward_t(&real_image, true);
+                    let loss_d_real = gan_criterion.forward(&real_preds, true);
+                    let loss_d = (loss_d_fake + loss_d_real) * 0.5;
+                    loss_d.backward();
+                    discriminator_opt.step();
+                    train_writer.add_scalar(
+                        "Discriminator Loss",
+                        f32::try_from(loss_d)?,
+                        steps as _,
+                    );
                     // optimize generator
                     discriminator_vs.freeze();
                     generator_opt.zero_grad();
                     let fake_image =
                         Tensor::cat(&[input.shallow_clone(), fake_color.shallow_clone()], 1);
                     let fake_preds = discriminator_net.forward_t(&fake_image, true);
-                    let loss_g = match model_path.is_some() {
-                        true => {
-                            let loss_g_gan = gan_criterion.forward(&fake_preds, true);
-                            let loss_g_l1 =
-                                fake_color.l1_loss(&target, tch::Reduction::Mean) * lambda_l1;
-                            loss_g_gan + loss_g_l1
-                        }
-                        false => fake_color.mse_loss(&target, tch::Reduction::Mean),
+                    let loss_g = {
+                        let loss_g_gan = gan_criterion.forward(&fake_preds, true);
+                        let loss_g_l1 =
+                            fake_color.l1_loss(&target, tch::Reduction::Mean) * lambda_l1;
+                        loss_g_gan + loss_g_l1
                     };
 
                     loss_g.backward();
                     generator_opt.step();
                     train_writer.add_scalar("Generator Loss", f32::try_from(loss_g)?, steps as _);
-                    // every 5 steps, send an image to tensorboard
-                    if steps % 10 == 0 {
+                    // every 20 steps, send an image to tensorboard
+                    if steps % 20 == 0 {
                         let l = input.narrow(0, 0, 1).squeeze();
                         let ab = fake_color.narrow(0, 0, 1).squeeze();
                         let img = lab_to_rgb(&l, &ab)?;
@@ -311,10 +297,6 @@ fn main() -> Result<()> {
                             &[3, w as usize, h as usize],
                             0,
                         );
-                    }
-
-                    if steps % 200 == 0 && model_path.is_some() {
-                        generator_vs.save(&format!("checkpoint{}.safetensors", steps))?;
                     }
                 }
                 // for images in test_images.chunks(16) {
@@ -335,8 +317,8 @@ fn main() -> Result<()> {
         }
         "test" => {
             generator_vs.load(&args[2])?;
-            let (l, _) = load_lab(&args[3], true)?;
-            let (full_l, _) = load_lab(&args[3], false)?;
+            let (l, _) = load_lab(&rgb2lab, &args[3], true)?;
+            let (full_l, _) = load_lab(&rgb2lab, &args[3], false)?;
             let (_, w, h) = full_l.size3()?;
             tch::no_grad(|| -> anyhow::Result<()> {
                 let out = generator_net.forward_t(&l.unsqueeze(0).to_device(device), true);
