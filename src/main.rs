@@ -94,8 +94,8 @@ fn lab_to_rgb(l: &Tensor, ab: &Tensor) -> Result<RgbImage> {
     let l: ArrayBase<OwnedRepr<f32>, Dim<IxDynImpl>> = l.try_into()?;
     let ab: ArrayBase<OwnedRepr<f32>, Dim<IxDynImpl>> = ab.try_into()?;
     let mut image = RgbImage::new(w as _, h as _);
-    for x in 0..w {
-        for y in 0..h {
+    for y in 0..w {
+        for x in 0..h {
             let rgb = Lab::to_rgb(&Lab {
                 l: (l[[x as usize, y as usize]] / 2.0 + 0.5) * 100.0,
                 a: (ab[[0, x as usize, y as usize]] / 2.0 + 0.5) * 255. - 128.0,
