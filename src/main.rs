@@ -213,7 +213,7 @@ fn main() -> Result<()> {
         total_vars += var.numel();
     }
     println!("Total trainable parameters: {}", total_vars);
-    let rgb2lab = CModule::load_on_device("rgb2lab.pt", device)?;
+    let rgb2lab = CModule::load("rgb2lab.pt")?;
     let args = std::env::args().collect::<Vec<_>>();
     match args[1].as_str() {
         "train" => {
@@ -247,8 +247,9 @@ fn main() -> Result<()> {
                     let xs: Vec<_> = images
                         .into_iter()
                         .map(|img_path| load(img_path).expect("failed to open image").unsqueeze(0)).collect();
-                    let (input, target) = convert_lab(&rgb2lab, &Tensor::cat(&xs, 0).to_device(device))?;
-                    let fake_color = generator_net.forward_t(&input, true);
+                    let (input, target) = convert_lab(&rgb2lab, &Tensor::cat(&xs, 0))?;
+                    let target = target.to_device(device);
+                    let fake_color = generator_net.forward_t(&input.to_device(device), true);
                     // optimize discriminator
                     discriminator_vs.unfreeze();
                     discriminator_opt.zero_grad();
