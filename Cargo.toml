@@ -11,7 +11,7 @@ image = "0.24.7"
 lab = "0.11.0"
 lazy_static = "1.4.0"
 ndarray = "0.15.6"
-opencv = "0.84.5"
+#opencv = "0.84.5"
 rand = "0.8.5"
 tch = {version="0.13.0",features=["download-libtorch"]}
 tensorboard-rs = "0.5.9"
