@@ -245,7 +245,7 @@ fn main() -> Result<()> {
                     steps += 1;
                     let xs: Vec<_> = images
                         .into_iter()
-                        .map(|img_path| load(img_path).expect("failed to open image").unsqueeze(0)).collect();
+                        .map(|img_path| load_and_resize(img_path, 256, 256).expect("failed to open image").unsqueeze(0)).collect();
                     let (input, target) = convert_lab(&rgb2lab, &Tensor::cat(&xs, 0))?;
                     let target = target.to_device(device);
                     let input = input.to_device(device);
