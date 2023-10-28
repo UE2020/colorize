@@ -213,7 +213,7 @@ fn main() -> Result<()> {
         total_vars += var.numel();
     }
     println!("Total trainable parameters: {}", total_vars);
-    let rgb2lab = CModule::load("rgb2lab.pt")?;
+    let rgb2lab = CModule::load_on_device("rgb2lab.pt", device)?;
     let args = std::env::args().collect::<Vec<_>>();
     match args[1].as_str() {
         "train" => {
