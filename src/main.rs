@@ -247,7 +247,7 @@ fn main() -> Result<()> {
                     let xs: Vec<_> = images
                         .into_iter()
                         .map(|img_path| load(img_path).expect("failed to open image").unsqueeze(0)).collect();
-                    let (input, target) = convert_lab(&rgb2lab, &Tensor::cat(&xs, 0))?;
+                    let (input, target) = convert_lab(&rgb2lab, &Tensor::cat(&xs, 0).to_device(device))?;
                     let fake_color = generator_net.forward_t(&input, true);
                     // optimize discriminator
                     discriminator_vs.unfreeze();
