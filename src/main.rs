@@ -239,9 +239,9 @@ fn main() -> Result<()> {
                 .collect::<Vec<_>>();
             let mut steps = 0usize;
             //let mut test_steps = 0usize;
-            for epoch in 1..=2 {
+            for epoch in 1..=(args[3].parse()?) {
                 images.shuffle(&mut thread_rng());
-                for images in images.chunks(64) {
+                for images in images.chunks(16) {
                     steps += 1;
                     let xs: Vec<_> = images
                         .into_iter()
