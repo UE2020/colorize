@@ -308,12 +308,12 @@ fn main() -> Result<()> {
                             &[3, w as usize, h as usize],
                             0,
                         );
+                    }
+                    if (steps * 16) % 35000 == 0 {
                         let time_per_step = now.elapsed() / steps as u32;
                         let steps_left = total_steps - steps;
                         eprint!("{}{}", up(), erase());
                         eprintln!("Total ETA: {:?}", (steps_left as u32 * time_per_step).hhmmss());
-                    }
-                    if (steps * 16) % 35000 == 0{
                         generator_vs.save(&format!("checkpoint{:02}.safetensors", steps))?;
                     }
                 }
