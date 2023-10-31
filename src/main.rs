@@ -14,9 +14,11 @@ use rand::thread_rng;
 use tch::vision::image::{load_and_resize, load};
 use std::fs::{read_dir, remove_dir_all};
 use std::path::Path;
+use std::time::Instant;
 use tch::nn::{ConvConfig, ConvTransposeConfig, ModuleT, OptimizerConfig, Module};
 use tch::{nn, Device, Kind, Tensor, CModule, IndexOp};
 use tensorboard_rs as tensorboard;
+use hhmmss::Hhmmss;
 
 mod unet;
 
@@ -217,6 +219,7 @@ fn main() -> Result<()> {
     let args = std::env::args().collect::<Vec<_>>();
     match args[1].as_str() {
         "train" => {
+            const BATCH_SIZE: usize = 4;
             remove_dir_all("./logdir")?;
             let mut train_writer =
                 tensorboard::summary_writer::SummaryWriter::new("./logdir/train");
@@ -238,10 +241,17 @@ fn main() -> Result<()> {
                 .map(|p| p.path().to_string_lossy().into_owned())
                 .collect::<Vec<_>>();
             let mut steps = 0usize;
+            let now = Instant::now();
+            let epochs = args[3].parse()?;
+            let total_steps = (images.len() / BATCH_SIZE) * epochs; 
             //let mut test_steps = 0usize;
-            for epoch in 1..=(args[3].parse()?) {
+            eprintln!();
+            for epoch in 1..=epochs {
                 images.shuffle(&mut thread_rng());
-                for images in images.chunks(16) {
+                for images in images.chunks(BATCH_SIZE) {
+                    if images.len() < BATCH_SIZE {
+                        continue
+                    }
                     steps += 1;
                     let xs: Vec<_> = images
                         .into_iter()
@@ -286,7 +296,7 @@ fn main() -> Result<()> {
                     generator_opt.step();
                     train_writer.add_scalar("Generator Loss", f32::try_from(loss_g)?, steps as _);
                     // every 20 steps, send an image to tensorboard
-                    if steps % 20 == 0 {
+                    if steps % (20 * 4) == 0 {
                         let l = input.narrow(0, 0, 1).squeeze();
                         let ab = fake_color.narrow(0, 0, 1).squeeze();
                         let img = lab_to_rgb(&l, &ab)?;
@@ -298,6 +308,10 @@ fn main() -> Result<()> {
                             &[3, w as usize, h as usize],
                             0,
                         );
+                        let time_per_step = now.elapsed() / steps as u32;
+                        let steps_left = total_steps - steps;
+                        eprint!("{}{}", up(), erase());
+                        eprintln!("Total ETA: {:?}", (steps_left as u32 * time_per_step).hhmmss());
                     }
                     if (steps * 16) % 35000 == 0{
                         generator_vs.save(&format!("checkpoint{:02}.safetensors", steps))?;
@@ -325,7 +339,7 @@ fn main() -> Result<()> {
             let (mut full_l, _) = load_lab(&rgb2lab, &args[3], false)?;
             let (_, _, w, h) = full_l.size4()?;
             tch::no_grad(|| -> anyhow::Result<()> {
-                let mut out = generator_net.forward_t(&l.to_device(device), false);
+                let mut out = generator_net.forward_t(&l.to_device(device), true);
                 full_l = (full_l + 1.0) * 50.0;
                 out = out * 110.0;
                 out = out.upsample_bicubic2d([w, h], false, None, None);
@@ -420,3 +434,13 @@ fn main() -> Result<()> {
     }
     Ok(())
 }
+
+fn up() -> String {
+    format!("{}[A", ESC)
+}
+
+fn erase() -> String {
+    format!("{}[2K", ESC)
+}
+
+const ESC: char = 27u8 as char;
