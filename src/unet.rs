@@ -1,5 +1,5 @@
-use tch::nn::{conv_transpose2d, ConvConfig, ConvTransposeConfig, ModuleT, Init, BatchNormConfig};
-use tch::{nn, Tensor, Device};
+use tch::nn::{conv_transpose2d, BatchNormConfig, ConvConfig, ConvTransposeConfig, Init, ModuleT};
+use tch::{nn, Device, Tensor};
 
 #[derive(Debug)]
 pub struct UnetBlock {
@@ -29,21 +29,38 @@ impl UnetBlock {
                 stride: 2,
                 padding: 1,
                 bias: false,
-                ws_init: Init::Randn { mean: 0.0, stdev: 0.02 },
+                ws_init: Init::Randn {
+                    mean: 0.0,
+                    stdev: 0.02,
+                },
                 bs_init: Init::Const(0.0),
                 ..Default::default()
             },
         );
-        let downnorm = nn::batch_norm2d(&p / "downnorm", ni as _, BatchNormConfig {
-            ws_init: Init::Randn { mean: 1.0, stdev: 0.02 },
-            bs_init: Init::Const(0.0),
-            ..Default::default()
-        });
-        let upnorm = nn::batch_norm2d(&p / "upnorm", nf as _, BatchNormConfig {
-            ws_init: Init::Randn { mean: 1.0, stdev: 0.02 },
-            bs_init: Init::Const(0.0),
-            ..Default::default()
-        });
+        let downnorm = nn::batch_norm2d(
+            &p / "downnorm",
+            ni as _,
+            BatchNormConfig {
+                ws_init: Init::Randn {
+                    mean: 1.0,
+                    stdev: 0.02,
+                },
+                bs_init: Init::Const(0.0),
+                ..Default::default()
+            },
+        );
+        let upnorm = nn::batch_norm2d(
+            &p / "upnorm",
+            nf as _,
+            BatchNormConfig {
+                ws_init: Init::Randn {
+                    mean: 1.0,
+                    stdev: 0.02,
+                },
+                bs_init: Init::Const(0.0),
+                ..Default::default()
+            },
+        );
         if outermost {
             let upconv = conv_transpose2d(
                 &p / "upconv",
@@ -53,7 +70,10 @@ impl UnetBlock {
                 ConvTransposeConfig {
                     stride: 2,
                     padding: 1,
-                    ws_init: Init::Randn { mean: 0.0, stdev: 0.02 },
+                    ws_init: Init::Randn {
+                        mean: 0.0,
+                        stdev: 0.02,
+                    },
                     bs_init: Init::Const(0.0),
                     ..Default::default()
                 },
@@ -75,7 +95,10 @@ impl UnetBlock {
                     stride: 2,
                     padding: 1,
                     bias: false,
-                    ws_init: Init::Randn { mean: 0.0, stdev: 0.02 },
+                    ws_init: Init::Randn {
+                        mean: 0.0,
+                        stdev: 0.02,
+                    },
                     bs_init: Init::Const(0.0),
                     ..Default::default()
                 },
@@ -95,7 +118,10 @@ impl UnetBlock {
                     stride: 2,
                     padding: 1,
                     bias: false,
-                    ws_init: Init::Randn { mean: 0.0, stdev: 0.02 },
+                    ws_init: Init::Randn {
+                        mean: 0.0,
+                        stdev: 0.02,
+                    },
                     bs_init: Init::Const(0.0),
                     ..Default::default()
                 },
@@ -217,10 +243,17 @@ impl PatchDiscriminator {
                 true,
             ));
         }
-        seq = seq.add(Self::get_layers(&p / "final", num_filters * 2_usize.pow(n_down as u32), 1, 4, 1, 1, false, false));
-        Self {
-            seq
-        }
+        seq = seq.add(Self::get_layers(
+            &p / "final",
+            num_filters * 2_usize.pow(n_down as u32),
+            1,
+            4,
+            1,
+            1,
+            false,
+            false,
+        ));
+        Self { seq }
     }
 
     pub fn get_layers(
@@ -242,17 +275,27 @@ impl PatchDiscriminator {
                 stride: stride as _,
                 padding: pad as _,
                 bias: !norm,
-                ws_init: Init::Randn { mean: 0.0, stdev: 0.02 },
+                ws_init: Init::Randn {
+                    mean: 0.0,
+                    stdev: 0.02,
+                },
                 bs_init: Init::Const(0.0),
                 ..Default::default()
             },
         ));
         if norm {
-            seq = seq.add(nn::batch_norm2d(&p / "norm", nf as _, BatchNormConfig {
-                ws_init: Init::Randn { mean: 1.0, stdev: 0.02 },
-                bs_init: Init::Const(0.0),
-                ..Default::default()
-            }))
+            seq = seq.add(nn::batch_norm2d(
+                &p / "norm",
+                nf as _,
+                BatchNormConfig {
+                    ws_init: Init::Randn {
+                        mean: 1.0,
+                        stdev: 0.02,
+                    },
+                    bs_init: Init::Const(0.0),
+                    ..Default::default()
+                },
+            ))
         }
         if act {
             seq = seq.add_fn(|t| t.maximum(&(t * 0.2))); // leaky relu
@@ -294,7 +337,12 @@ impl GANLoss {
 
     pub fn forward(&self, preds: &Tensor, is_real: bool) -> Tensor {
         let labels = self.get_labels(preds, is_real);
-        let loss = preds.binary_cross_entropy_with_logits::<Tensor>(&labels, None, None, tch::Reduction::Mean);
+        let loss = preds.binary_cross_entropy_with_logits::<Tensor>(
+            &labels,
+            None,
+            None,
+            tch::Reduction::Mean,
+        );
         loss
     }
 }

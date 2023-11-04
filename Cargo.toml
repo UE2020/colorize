@@ -16,3 +16,4 @@ ndarray = "0.15.6"
 rand = "0.8.5"
 tch = {version="0.13.0",features=["download-libtorch"]}
 tensorboard-rs = "0.5.9"
+walkdir = "2.4.0"

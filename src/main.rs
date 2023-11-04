@@ -9,16 +9,17 @@ use ndarray::{Array3, ArrayBase, Dim, IxDynImpl, OwnedRepr};
 // use opencv::prelude::VideoCaptureTraitConst;
 // use opencv::prelude::VideoWriterTrait;
 // use opencv::*;
+use hhmmss::Hhmmss;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use tch::vision::image::{load_and_resize, load};
 use std::fs::{read_dir, remove_dir_all};
 use std::path::Path;
-use std::time::Instant;
-use tch::nn::{ConvConfig, ConvTransposeConfig, ModuleT, OptimizerConfig, Module};
-use tch::{nn, Device, Kind, Tensor, CModule, IndexOp};
+use std::time::{Instant, Duration};
+use tch::nn::{ConvConfig, ConvTransposeConfig, Module, ModuleT, OptimizerConfig};
+use tch::vision::image::{load, load_and_resize};
+use tch::{nn, CModule, Device, IndexOp, Kind, Tensor};
 use tensorboard_rs as tensorboard;
-use hhmmss::Hhmmss;
+use walkdir::WalkDir;
 
 mod unet;
 
@@ -67,7 +68,7 @@ fn convert_lab(rgb2lab: &CModule, xs: &Tensor) -> Result<(Tensor, Tensor)> {
 //             None,
 //             None,
 //         );
-//         let out = net.forward_t(&resized_l, true);
+//         let out = net.forward_t(&resized_l, false);
 //         let out = out
 //             .upsample_bicubic2d([w as i64, h as i64], false, None, None)
 //             .squeeze();
@@ -219,14 +220,15 @@ fn main() -> Result<()> {
     let args = std::env::args().collect::<Vec<_>>();
     match args[1].as_str() {
         "train" => {
-            const BATCH_SIZE: usize = 4;
+            const BATCH_SIZE: usize = 16;
             remove_dir_all("./logdir")?;
             let mut train_writer =
                 tensorboard::summary_writer::SummaryWriter::new("./logdir/train");
             //let mut test_writer = tensorboard::summary_writer::SummaryWriter::new("./logdir/test");
             let mut discriminator_vs = nn::VarStore::new(device);
             let lambda_l1 = 100.0;
-            let discriminator_net = unet::PatchDiscriminator::new(discriminator_vs.root(), 3, 64, 3);
+            let discriminator_net =
+                unet::PatchDiscriminator::new(discriminator_vs.root(), 3, 64, 3);
             let gan_criterion = unet::GANLoss::new(1.0, 0.0, device);
             let mut generator_opt = nn::Adam::default()
                 .beta1(0.5)
@@ -236,26 +238,34 @@ fn main() -> Result<()> {
                 .beta1(0.5)
                 .beta2(0.999)
                 .build(&discriminator_vs, 2e-4)?;
-            let mut images = read_dir(&args[2])?
-                .filter_map(|e| e.ok())
-                .map(|p| p.path().to_string_lossy().into_owned())
-                .collect::<Vec<_>>();
-            let mut steps = 0usize;
+            let mut images: Vec<String> = WalkDir::new(&args[2])
+                .into_iter()
+                .filter_map(|entry| {
+                    let entry = entry.unwrap();
+                    if entry.file_type().is_file() {
+                        Some(entry.path().display().to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let duration = Duration::from_secs_f32(args[3].parse::<f32>()? * 3600.0);
             let now = Instant::now();
-            let epochs = args[3].parse()?;
-            let total_steps = (images.len() / BATCH_SIZE) * epochs; 
+            let mut steps = 0usize;
             //let mut test_steps = 0usize;
             eprintln!();
-            for epoch in 1..=epochs {
+            for epoch in 1.. {
                 images.shuffle(&mut thread_rng());
                 for images in images.chunks(BATCH_SIZE) {
                     if images.len() < BATCH_SIZE {
-                        continue
+                        continue;
                     }
                     steps += 1;
                     let xs: Vec<_> = images
                         .into_iter()
-                        .map(|img_path| load_and_resize(img_path, 256, 256)).filter_map(|t| t.ok().map(|t| t.unsqueeze(0))).collect();
+                        .map(|img_path| load_and_resize(img_path, 256, 256))
+                        .filter_map(|t| t.ok().map(|t| t.unsqueeze(0)))
+                        .collect();
                     let (input, target) = convert_lab(&rgb2lab, &Tensor::cat(&xs, 0))?;
                     let target = target.to_device(device);
                     let input = input.to_device(device);
@@ -309,12 +319,10 @@ fn main() -> Result<()> {
                             0,
                         );
                     }
-                    if (steps * 16) % 35000 == 0 {
-                        let time_per_step = now.elapsed() / steps as u32;
-                        let steps_left = total_steps - steps;
-                        eprint!("{}{}", up(), erase());
-                        eprintln!("Total ETA: {:?}", (steps_left as u32 * time_per_step).hhmmss());
-                        generator_vs.save(&format!("checkpoint{:02}.safetensors", steps))?;
+
+                    if now.elapsed() >= duration {
+                        generator_vs.save("final.safetensors")?;
+                        println!("Completed and saved after {} training steps.", steps);
                     }
                 }
                 // for images in test_images.chunks(16) {
@@ -335,16 +343,18 @@ fn main() -> Result<()> {
         }
         "test" => {
             generator_vs.load(&args[2])?;
-            let (l, _) = load_lab(&rgb2lab, &args[3], true)?;
-            let (mut full_l, _) = load_lab(&rgb2lab, &args[3], false)?;
-            let (_, _, w, h) = full_l.size4()?;
+            let (mut l, _) = load_lab(&rgb2lab, &args[3], false)?;
+            let (_, _, w, h) = l.size4()?;
             tch::no_grad(|| -> anyhow::Result<()> {
-                let mut out = generator_net.forward_t(&l.to_device(device), true);
-                full_l = (full_l + 1.0) * 50.0;
+                let small_l = l.upsample_bicubic2d([256, 256], false, None, None);
+                let mut out =
+                    generator_net.forward_t(&small_l.to_device(device), args[4] == "true");
+                l = (l + 1.0) * 50.0;
                 out = out * 110.0;
                 out = out.upsample_bicubic2d([w, h], false, None, None);
-                let full = Tensor::cat(&[full_l.to_device(device), out], 1);
-                let full = (lab2rgb.forward_t(&full, false).to_device(Device::Cpu) * 255.0).to_kind(Kind::Uint8);
+                let full = Tensor::cat(&[l.to_device(device), out], 1);
+                let full = (lab2rgb.forward_t(&full, false).to_device(Device::Cpu) * 255.0)
+                    .to_kind(Kind::Uint8);
                 tch::vision::image::save(&full.squeeze(), "fixed.png")?;
                 Ok(())
             })?;
