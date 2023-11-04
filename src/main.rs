@@ -14,7 +14,7 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::fs::{read_dir, remove_dir_all};
 use std::path::Path;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 use tch::nn::{ConvConfig, ConvTransposeConfig, Module, ModuleT, OptimizerConfig};
 use tch::vision::image::{load, load_and_resize};
 use tch::{nn, CModule, Device, IndexOp, Kind, Tensor};
@@ -238,7 +238,8 @@ fn main() -> Result<()> {
                 .beta1(0.5)
                 .beta2(0.999)
                 .build(&discriminator_vs, 2e-4)?;
-            let mut images: Vec<String> = WalkDir::new(&args[2]).max_open(1300)
+            let mut images: Vec<String> = WalkDir::new(&args[2])
+                .max_open(1300)
                 .into_iter()
                 .filter_map(|entry| {
                     let entry = entry.unwrap();
@@ -249,6 +250,7 @@ fn main() -> Result<()> {
                     }
                 })
                 .collect();
+            println!("Directory exploration complete!");
             let duration = Duration::from_secs_f32(args[3].parse::<f32>()? * 3600.0);
             let now = Instant::now();
             let mut steps = 0usize;
@@ -256,6 +258,7 @@ fn main() -> Result<()> {
             eprintln!();
             for epoch in 1.. {
                 images.shuffle(&mut thread_rng());
+                println!("Image shuffling complete!");
                 for images in images.chunks(BATCH_SIZE) {
                     if images.len() < BATCH_SIZE {
                         continue;
