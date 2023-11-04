@@ -238,13 +238,18 @@ fn main() -> Result<()> {
                 .beta1(0.5)
                 .beta2(0.999)
                 .build(&discriminator_vs, 2e-4)?;
+            let mut total_count = 1000 * 1300;
+            let mut completed = 0;
             let mut images: Vec<String> = WalkDir::new(&args[2])
                 .max_open(1300)
                 .into_iter()
                 .filter_map(|entry| {
                     let entry = entry.unwrap();
                     if entry.file_type().is_file() {
-                        dbg!(&entry);
+                        completed += 1;
+                        if completed % 1000 == 0 {
+                            println!("Completed {:.2}%", (completed as f32 / total_count as f32) * 100.0);
+                        }
                         Some(entry.path().display().to_string())
                     } else {
                         None
