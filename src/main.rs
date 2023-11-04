@@ -244,6 +244,7 @@ fn main() -> Result<()> {
                 .filter_map(|entry| {
                     let entry = entry.unwrap();
                     if entry.file_type().is_file() {
+                        dbg!(&entry);
                         Some(entry.path().display().to_string())
                     } else {
                         None
