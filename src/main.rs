@@ -9,10 +9,9 @@ use ndarray::{Array3, ArrayBase, Dim, IxDynImpl, OwnedRepr};
 // use opencv::prelude::VideoCaptureTraitConst;
 // use opencv::prelude::VideoWriterTrait;
 // use opencv::*;
-use hhmmss::Hhmmss;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use std::fs::{read_dir, remove_dir_all};
+use std::fs::remove_dir_all;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use tch::nn::{ConvConfig, ConvTransposeConfig, Module, ModuleT, OptimizerConfig};
@@ -109,103 +108,6 @@ fn lab_to_rgb(l: &Tensor, ab: &Tensor) -> Result<RgbImage> {
     Ok(image)
 }
 
-/// Convolutional autoencoder
-#[allow(unused)]
-fn conv_ae(p: nn::Path) -> impl ModuleT {
-    let encoder_conv1 = nn::conv2d(
-        &p / "encoder_conv1",
-        1,
-        64,
-        3,
-        ConvConfig {
-            padding: 1,
-            stride: 1,
-            ..Default::default()
-        },
-    );
-    let encoder_conv2 = nn::conv2d(
-        &p / "encoder_conv2",
-        64,
-        64,
-        3,
-        ConvConfig {
-            padding: 1,
-            stride: 2,
-            ..Default::default()
-        },
-    );
-    let encoder_conv3 = nn::conv2d(
-        &p / "encoder_conv3",
-        64,
-        128,
-        3,
-        ConvConfig {
-            padding: 1,
-            stride: 2,
-            ..Default::default()
-        },
-    );
-    let encoder_conv4 = nn::conv2d(
-        &p / "encoder_conv4",
-        128,
-        256,
-        3,
-        ConvConfig {
-            padding: 1,
-            stride: 2,
-            ..Default::default()
-        },
-    );
-    let decoder_cfg = ConvTransposeConfig {
-        stride: 2,
-        padding: 1,
-        output_padding: 1,
-        ..Default::default()
-    };
-    let decoder_conv1 = nn::conv_transpose2d(&p / "decoder_conv1", 256, 128, 3, decoder_cfg);
-    let decoder_conv2 = nn::conv_transpose2d(&p / "decoder_conv2", 256, 64, 3, decoder_cfg);
-    let decoder_conv3 = nn::conv_transpose2d(&p / "decoder_conv3", 128, 128, 3, decoder_cfg);
-    let decoder_conv4 = nn::conv_transpose2d(
-        &p / "decoder_conv4",
-        192,
-        15,
-        3,
-        ConvTransposeConfig {
-            stride: 1,
-            padding: 1,
-            ..Default::default()
-        },
-    );
-    let converge = nn::conv2d(
-        &p / "converge",
-        16,
-        2,
-        3,
-        ConvConfig {
-            stride: 1,
-            padding: 1,
-            ..Default::default()
-        },
-    );
-    nn::func_t(move |x, train| {
-        let x1 = x.apply_t(&encoder_conv1, train).relu();
-        let x2 = x1.apply_t(&encoder_conv2, train).relu();
-        let x3 = x2.apply_t(&encoder_conv3, train).relu();
-        let x4 = x3.apply_t(&encoder_conv4, train).relu();
-        let xd = x4.apply_t(&decoder_conv1, train).relu();
-        let xd = Tensor::cat(&[xd, x3], 1).dropout(0.2, train);
-        let xd = xd.apply_t(&decoder_conv2, train).relu();
-        let xd = Tensor::cat(&[xd, x2], 1).dropout(0.2, train);
-        let xd = xd.apply_t(&decoder_conv3, train).relu();
-        let xd = Tensor::cat(&[xd, x1], 1).dropout(0.2, train);
-        let xd = xd.apply_t(&decoder_conv4, train).relu();
-        let xd = Tensor::cat(&[xd, x.shallow_clone()], 1)
-            .apply_t(&converge, train)
-            .relu();
-        xd
-    })
-}
-
 fn main() -> Result<()> {
     let device = Device::cuda_if_available();
     let mut generator_vs = nn::VarStore::new(device);
@@ -220,8 +122,8 @@ fn main() -> Result<()> {
     let args = std::env::args().collect::<Vec<_>>();
     match args[1].as_str() {
         "train" => {
-            const BATCH_SIZE: usize = 16;
-            remove_dir_all("./logdir")?;
+            const BATCH_SIZE: usize = 1;
+            remove_dir_all("./logdir").ok();
             let mut train_writer =
                 tensorboard::summary_writer::SummaryWriter::new("./logdir/train");
             //let mut test_writer = tensorboard::summary_writer::SummaryWriter::new("./logdir/test");
@@ -248,7 +150,10 @@ fn main() -> Result<()> {
                     if entry.file_type().is_file() {
                         completed += 1;
                         if completed % 100000 == 0 {
-                            println!("Completed {:.2}%", (completed as f32 / total_count as f32) * 100.0);
+                            println!(
+                                "Completed {:.2}%",
+                                (completed as f32 / total_count as f32) * 100.0
+                            );
                         }
                         Some(entry.path().display().to_string())
                     } else {
@@ -257,6 +162,7 @@ fn main() -> Result<()> {
                 })
                 .collect();
             println!("Directory exploration complete!");
+            println!("{} images found", images.len());
             let duration = Duration::from_secs_f32(args[3].parse::<f32>()? * 3600.0);
             let now = Instant::now();
             let mut steps = 0usize;
@@ -279,6 +185,7 @@ fn main() -> Result<()> {
                     let target = target.to_device(device);
                     let input = input.to_device(device);
                     let fake_color = generator_net.forward_t(&input, true);
+                    //let greater_than_half = now.elapsed() >= (duration / 2);
                     // optimize discriminator
                     discriminator_vs.unfreeze();
                     discriminator_opt.zero_grad();
@@ -315,7 +222,7 @@ fn main() -> Result<()> {
                     generator_opt.step();
                     train_writer.add_scalar("Generator Loss", f32::try_from(loss_g)?, steps as _);
                     // every 20 steps, send an image to tensorboard
-                    if steps % (20 * 4) == 0 {
+                    if steps % 1280 == 0 {
                         let l = input.narrow(0, 0, 1).squeeze();
                         let ab = fake_color.narrow(0, 0, 1).squeeze();
                         let img = lab_to_rgb(&l, &ab)?;
@@ -454,13 +361,3 @@ fn main() -> Result<()> {
     }
     Ok(())
 }
-
-fn up() -> String {
-    format!("{}[A", ESC)
-}
-
-fn erase() -> String {
-    format!("{}[2K", ESC)
-}
-
-const ESC: char = 27u8 as char;
