@@ -122,7 +122,7 @@ fn main() -> Result<()> {
     let args = std::env::args().collect::<Vec<_>>();
     match args[1].as_str() {
         "train" => {
-            const BATCH_SIZE: usize = 1;
+            const BATCH_SIZE: usize = 16;
             remove_dir_all("./logdir").ok();
             let mut train_writer =
                 tensorboard::summary_writer::SummaryWriter::new("./logdir/train");
@@ -185,44 +185,50 @@ fn main() -> Result<()> {
                     let target = target.to_device(device);
                     let input = input.to_device(device);
                     let fake_color = generator_net.forward_t(&input, true);
-                    //let greater_than_half = now.elapsed() >= (duration / 2);
+                    let greater_than_half = now.elapsed() >= (duration / 2);
                     // optimize discriminator
-                    discriminator_vs.unfreeze();
-                    discriminator_opt.zero_grad();
-                    let fake_image =
-                        Tensor::cat(&[input.shallow_clone(), fake_color.shallow_clone()], 1);
-                    let fake_preds = discriminator_net.forward_t(&fake_image.detach(), true);
-                    let loss_d_fake = gan_criterion.forward(&fake_preds, false);
-                    let real_image =
-                        Tensor::cat(&[input.shallow_clone(), target.shallow_clone()], 1);
-                    let real_preds = discriminator_net.forward_t(&real_image, true);
-                    let loss_d_real = gan_criterion.forward(&real_preds, true);
-                    let loss_d = (loss_d_fake + loss_d_real) * 0.5;
-                    loss_d.backward();
-                    discriminator_opt.step();
-                    train_writer.add_scalar(
-                        "Discriminator Loss",
-                        f32::try_from(loss_d)?,
-                        steps as _,
-                    );
+                    if greater_than_half {
+                        discriminator_vs.unfreeze();
+                        discriminator_opt.zero_grad();
+                        let fake_image =
+                            Tensor::cat(&[input.shallow_clone(), fake_color.shallow_clone()], 1);
+                        let fake_preds = discriminator_net.forward_t(&fake_image.detach(), true);
+                        let loss_d_fake = gan_criterion.forward(&fake_preds, false);
+                        let real_image =
+                            Tensor::cat(&[input.shallow_clone(), target.shallow_clone()], 1);
+                        let real_preds = discriminator_net.forward_t(&real_image, true);
+                        let loss_d_real = gan_criterion.forward(&real_preds, true);
+                        let loss_d = (loss_d_fake + loss_d_real) * 0.5;
+                        loss_d.backward();
+                        discriminator_opt.step();
+                        train_writer.add_scalar(
+                            "Discriminator Loss",
+                            f32::try_from(loss_d)?,
+                            steps as _,
+                        );
+                    }
                     // optimize generator
                     discriminator_vs.freeze();
                     generator_opt.zero_grad();
-                    let fake_image =
-                        Tensor::cat(&[input.shallow_clone(), fake_color.shallow_clone()], 1);
-                    let fake_preds = discriminator_net.forward_t(&fake_image, true);
-                    let loss_g = {
-                        let loss_g_gan = gan_criterion.forward(&fake_preds, true);
-                        let loss_g_l1 =
-                            fake_color.l1_loss(&target, tch::Reduction::Mean) * lambda_l1;
-                        loss_g_gan + loss_g_l1
+                    let loss_g = match greater_than_half {
+                        true => {
+                            let fake_image = Tensor::cat(
+                                &[input.shallow_clone(), fake_color.shallow_clone()],
+                                1,
+                            );
+                            let fake_preds = discriminator_net.forward_t(&fake_image, true);
+                            let loss_g_gan = gan_criterion.forward(&fake_preds, true);
+                            let loss_g_l1 =
+                                fake_color.l1_loss(&target, tch::Reduction::Mean) * lambda_l1;
+                            loss_g_gan + loss_g_l1
+                        }
+                        false => fake_color.l1_loss(&target, tch::Reduction::Mean),
                     };
-
                     loss_g.backward();
                     generator_opt.step();
                     train_writer.add_scalar("Generator Loss", f32::try_from(loss_g)?, steps as _);
                     // every 20 steps, send an image to tensorboard
-                    if steps % 1280 == 0 {
+                    if steps % (20 * 4) == 0 {
                         let l = input.narrow(0, 0, 1).squeeze();
                         let ab = fake_color.narrow(0, 0, 1).squeeze();
                         let img = lab_to_rgb(&l, &ab)?;
