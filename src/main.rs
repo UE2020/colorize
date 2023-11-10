@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use image::{Rgb, RgbImage};
 use lab::Lab;
-use ndarray::{Array3, ArrayBase, Dim, IxDynImpl, OwnedRepr};
+use ndarray::{ArrayBase, Dim, IxDynImpl, OwnedRepr};
 // use opencv::core::VecN;
 // use opencv::prelude::MatTraitConst;
 // use opencv::prelude::MatTraitManual;
@@ -14,7 +14,7 @@ use rand::thread_rng;
 use std::fs::remove_dir_all;
 use std::path::Path;
 use std::time::{Duration, Instant};
-use tch::nn::{ConvConfig, ConvTransposeConfig, Module, ModuleT, OptimizerConfig};
+use tch::nn::{Module, ModuleT, OptimizerConfig};
 use tch::vision::image::{load, load_and_resize};
 use tch::{nn, CModule, Device, IndexOp, Kind, Tensor};
 use tensorboard_rs as tensorboard;
@@ -166,6 +166,12 @@ fn main() -> Result<()> {
             let duration = Duration::from_secs_f32(args[3].parse::<f32>()? * 3600.0);
             let now = Instant::now();
             let mut steps = 0usize;
+            let from_checkpoint = if let Some(checkpoint) = args.get(4) {
+                generator_vs.load(checkpoint)?;
+                true
+            } else {
+                false
+            };
             //let mut test_steps = 0usize;
             eprintln!();
             for epoch in 1.. {
@@ -185,7 +191,7 @@ fn main() -> Result<()> {
                     let target = target.to_device(device);
                     let input = input.to_device(device);
                     let fake_color = generator_net.forward_t(&input, true);
-                    let greater_than_half = now.elapsed() >= (duration / 2);
+                    let greater_than_half = (now.elapsed() >= (duration / 2)) || from_checkpoint;
                     // optimize discriminator
                     if greater_than_half {
                         discriminator_vs.unfreeze();
@@ -266,12 +272,12 @@ fn main() -> Result<()> {
         }
         "test" => {
             generator_vs.load(&args[2])?;
-            let (mut l, _) = load_lab(&rgb2lab, &args[3], false)?;
+            let (mut l, _) = load_lab(&rgb2lab, &args[3], args[4] == "true")?;
             let (_, _, w, h) = l.size4()?;
             tch::no_grad(|| -> anyhow::Result<()> {
                 let small_l = l.upsample_bicubic2d([256, 256], false, None, None);
                 let mut out =
-                    generator_net.forward_t(&small_l.to_device(device), args[4] == "true");
+                    generator_net.forward_t(&small_l.to_device(device), false);
                 l = (l + 1.0) * 50.0;
                 out = out * 110.0;
                 out = out.upsample_bicubic2d([w, h], false, None, None);
