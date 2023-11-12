@@ -191,7 +191,7 @@ fn main() -> Result<()> {
                     let target = target.to_device(device);
                     let input = input.to_device(device);
                     let fake_color = generator_net.forward_t(&input, true);
-                    let greater_than_half = (now.elapsed() >= (duration / 2)) || from_checkpoint;
+                    let greater_than_half = (now.elapsed() >= (duration / 2));
                     // optimize discriminator
                     if greater_than_half {
                         discriminator_vs.unfreeze();
@@ -272,19 +272,19 @@ fn main() -> Result<()> {
         }
         "test" => {
             generator_vs.load(&args[2])?;
-            let (mut l, _) = load_lab(&rgb2lab, &args[3], args[4] == "true")?;
+            let (mut l, _) = load_lab(&rgb2lab, &args[3], false)?;
             let (_, _, w, h) = l.size4()?;
             tch::no_grad(|| -> anyhow::Result<()> {
                 let small_l = l.upsample_bicubic2d([256, 256], false, None, None);
                 let mut out =
-                    generator_net.forward_t(&small_l.to_device(device), false);
+                    generator_net.forward_t(&small_l.to_device(device), args[4] == "true");
                 l = (l + 1.0) * 50.0;
                 out = out * 110.0;
                 out = out.upsample_bicubic2d([w, h], false, None, None);
                 let full = Tensor::cat(&[l.to_device(device), out], 1);
                 let full = (lab2rgb.forward_t(&full, false).to_device(Device::Cpu) * 255.0)
                     .to_kind(Kind::Uint8);
-                tch::vision::image::save(&full.squeeze(), "fixed.png")?;
+                tch::vision::image::save(&full.squeeze(), "fixed.jpg")?;
                 Ok(())
             })?;
         }
