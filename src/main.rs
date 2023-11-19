@@ -180,9 +180,9 @@ fn main() -> Result<()> {
                 images.shuffle(&mut thread_rng());
                 println!("Image shuffling complete!");
                 for images in images.chunks(BATCH_SIZE) {
-                    // if images.len() < BATCH_SIZE {
-                    //     continue;
-                    // }
+                    if images.len() < BATCH_SIZE {
+                        continue;
+                    }
                     steps += 1;
                     let xs: Vec<_> = images
                         .into_iter()
