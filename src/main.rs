@@ -192,7 +192,7 @@ fn main() -> Result<()> {
                     let (input, target) = convert_lab(&rgb2lab, &Tensor::cat(&xs, 0))?;
                     let target = target.to_device(device);
                     let input = input.to_device(device);
-                    let fake_color = generator_net.forward_t(&input, true);
+                    let fake_color = generator_net.forward_t(&input.repeat(&[1, 3, 1, 1]), true);
                     let greater_than_half = false;
                     // optimize discriminator
                     if greater_than_half {
@@ -291,7 +291,7 @@ fn main() -> Result<()> {
             tch::no_grad(|| -> anyhow::Result<()> {
                 let small_l = l.upsample_bicubic2d([256, 256], false, None, None);
                 let mut out =
-                    generator_net.forward_t(&small_l.to_device(device), args[4] == "true");
+                    generator_net.forward_t(&small_l.to_device(device).repeat(&[1, 3, 1, 1]), args[4] == "true");
                 l = (l + 1.0) * 50.0;
                 out = out * 110.0;
                 out = out.upsample_bicubic2d([w, h], false, None, None);
