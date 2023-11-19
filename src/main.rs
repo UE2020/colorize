@@ -235,7 +235,7 @@ fn main() -> Result<()> {
                     loss_g.backward();
                     generator_opt.step();
                     train_writer.add_scalar("Generator Loss", f32::try_from(loss_g)?, steps as _);
-                    if steps % (1) == 0 {
+                    if steps % (20 * 4) == 0 {
                         let l = input.narrow(0, 0, 1).squeeze();
                         let ab = fake_color.narrow(0, 0, 1).squeeze();
                         let img = lab_to_rgb(&l, &ab)?;
