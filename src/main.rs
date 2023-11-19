@@ -14,9 +14,9 @@ use rand::thread_rng;
 use std::fs::remove_dir_all;
 use std::path::Path;
 use std::time::{Duration, Instant};
-use tch::nn::{Module, ModuleT, OptimizerConfig};
+use tch::nn::{Module, ModuleT, OptimizerConfig, VarStore};
 use tch::vision::image::{load, load_and_resize};
-use tch::{nn, CModule, Device, IndexOp, Kind, Tensor};
+use tch::{nn, CModule, Device, IndexOp, Kind, Tensor, TrainableCModule};
 use tensorboard_rs as tensorboard;
 use walkdir::WalkDir;
 
@@ -111,7 +111,9 @@ fn lab_to_rgb(l: &Tensor, ab: &Tensor) -> Result<RgbImage> {
 fn main() -> Result<()> {
     let device = Device::cuda_if_available();
     let mut generator_vs = nn::VarStore::new(device);
-    let generator_net = unet::unet(generator_vs.root(), 1, 2, 8, 64);
+    let mut generator_net = TrainableCModule::load("resnet_unet.pt", generator_vs.root())?;
+    generator_net.set_train();
+    //let generator_net = unet::unet(generator_vs.root(), 1, 2, 8, 64);
     let mut total_vars = 0usize;
     for var in generator_vs.trainable_variables() {
         total_vars += var.numel();
@@ -166,7 +168,7 @@ fn main() -> Result<()> {
             let duration = Duration::from_secs_f32(args[3].parse::<f32>()? * 3600.0);
             let now = Instant::now();
             let mut steps = 0usize;
-            let from_checkpoint = if let Some(checkpoint) = args.get(4) {
+            let _from_checkpoint = if let Some(checkpoint) = args.get(4) {
                 generator_vs.load(checkpoint)?;
                 true
             } else {
@@ -178,9 +180,9 @@ fn main() -> Result<()> {
                 images.shuffle(&mut thread_rng());
                 println!("Image shuffling complete!");
                 for images in images.chunks(BATCH_SIZE) {
-                    if images.len() < BATCH_SIZE {
-                        continue;
-                    }
+                    // if images.len() < BATCH_SIZE {
+                    //     continue;
+                    // }
                     steps += 1;
                     let xs: Vec<_> = images
                         .into_iter()
@@ -191,7 +193,7 @@ fn main() -> Result<()> {
                     let target = target.to_device(device);
                     let input = input.to_device(device);
                     let fake_color = generator_net.forward_t(&input, true);
-                    let greater_than_half = (now.elapsed() >= (duration / 2));
+                    let greater_than_half = false;
                     // optimize discriminator
                     if greater_than_half {
                         discriminator_vs.unfreeze();
@@ -233,8 +235,7 @@ fn main() -> Result<()> {
                     loss_g.backward();
                     generator_opt.step();
                     train_writer.add_scalar("Generator Loss", f32::try_from(loss_g)?, steps as _);
-                    // every 20 steps, send an image to tensorboard
-                    if steps % (20 * 4) == 0 {
+                    if steps % (1) == 0 {
                         let l = input.narrow(0, 0, 1).squeeze();
                         let ab = fake_color.narrow(0, 0, 1).squeeze();
                         let img = lab_to_rgb(&l, &ab)?;
@@ -249,7 +250,7 @@ fn main() -> Result<()> {
                     }
 
                     if now.elapsed() >= duration {
-                        generator_vs.save("final.safetensors")?;
+                        generator_net.save("final.pt")?;
                         println!("Completed and saved after {} training steps.", steps);
                         return Ok(());
                     }
@@ -267,11 +268,24 @@ fn main() -> Result<()> {
                 //     test_writer.add_scalar("Generator Loss", f32::try_from(loss)?, test_steps as _);
                 // }
                 println!("epoch: {:02} complete!", epoch);
-                generator_vs.save(&format!("model{:02}.safetensors", epoch))?;
+                generator_net.save(&format!("model{:02}.pt", epoch))?;
             }
+        }
+        "merge" => {
+            generator_vs.load(&args[2])?;
+            let mut other_vs = VarStore::new(device);
+            unet::unet(other_vs.root(), 1, 2, 8, 64);
+            other_vs.load(&args[3])?;
+            let other_vars = other_vs.variables();
+            for (key, var) in generator_vs.variables_.lock().unwrap().named_variables.iter_mut() {
+                let other_var = &other_vars[key];
+                *var = (&*var + other_var) / 2;
+            }
+            generator_vs.save("merged.safetensors")?;
         }
         "test" => {
             generator_vs.load(&args[2])?;
+            generator_net.set_eval();
             let (mut l, _) = load_lab(&rgb2lab, &args[3], false)?;
             let (_, _, w, h) = l.size4()?;
             tch::no_grad(|| -> anyhow::Result<()> {
