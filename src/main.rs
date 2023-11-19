@@ -109,9 +109,10 @@ fn lab_to_rgb(l: &Tensor, ab: &Tensor) -> Result<RgbImage> {
 }
 
 fn main() -> Result<()> {
+    let args = std::env::args().collect::<Vec<_>>();
     let device = Device::cuda_if_available();
     let mut generator_vs = nn::VarStore::new(device);
-    let mut generator_net = TrainableCModule::load("resnet_unet.pt", generator_vs.root())?;
+    let mut generator_net = TrainableCModule::load(&args[2], generator_vs.root())?;
     generator_net.set_train();
     //let generator_net = unet::unet(generator_vs.root(), 1, 2, 8, 64);
     let mut total_vars = 0usize;
@@ -121,7 +122,6 @@ fn main() -> Result<()> {
     println!("Total trainable parameters: {}", total_vars);
     let rgb2lab = CModule::load("rgb2lab.pt")?;
     let lab2rgb = CModule::load("lab2rgb.pt")?;
-    let args = std::env::args().collect::<Vec<_>>();
     match args[1].as_str() {
         "train" => {
             const BATCH_SIZE: usize = 16;
@@ -144,7 +144,7 @@ fn main() -> Result<()> {
                 .build(&discriminator_vs, 2e-4)?;
             let total_count = 1000 * 1300;
             let mut completed = 0;
-            let mut images: Vec<String> = WalkDir::new(&args[2])
+            let mut images: Vec<String> = WalkDir::new(&args[3])
                 .max_open(1300)
                 .into_iter()
                 .filter_map(|entry| {
@@ -165,15 +165,10 @@ fn main() -> Result<()> {
                 .collect();
             println!("Directory exploration complete!");
             println!("{} images found", images.len());
-            let duration = Duration::from_secs_f32(args[3].parse::<f32>()? * 3600.0);
+            let duration = Duration::from_secs_f32(args[4].parse::<f32>()? * 3600.0);
             let now = Instant::now();
             let mut steps = 0usize;
-            let _from_checkpoint = if let Some(checkpoint) = args.get(4) {
-                generator_vs.load(checkpoint)?;
-                true
-            } else {
-                false
-            };
+            let from_checkpoint = args[5] == "true";
             //let mut test_steps = 0usize;
             eprintln!();
             for epoch in 1.. {
@@ -193,7 +188,7 @@ fn main() -> Result<()> {
                     let target = target.to_device(device);
                     let input = input.to_device(device);
                     let fake_color = generator_net.forward_t(&input.repeat(&[1, 3, 1, 1]), true);
-                    let greater_than_half = false;
+                    let greater_than_half = now.elapsed() >= (duration / 2) || from_checkpoint;
                     // optimize discriminator
                     if greater_than_half {
                         discriminator_vs.unfreeze();
@@ -284,7 +279,6 @@ fn main() -> Result<()> {
             generator_vs.save("merged.safetensors")?;
         }
         "test" => {
-            generator_vs.load(&args[2])?;
             generator_net.set_eval();
             let (mut l, _) = load_lab(&rgb2lab, &args[3], false)?;
             let (_, _, w, h) = l.size4()?;
