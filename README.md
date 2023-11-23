@@ -38,7 +38,12 @@ https://drive.google.com/file/d/1S6wAA-YkJsOVdh5-oHC6DkyPvfWiACA7/view?usp=shari
 ## Demo
 
 Colorizing legacy photos:
+
+
 <img src="https://i.imgur.com/O0Lhm75.jpeg" width="400">
+
 <img src="https://i.imgur.com/MefnRvW.jpeg" width="400">
+
 <img src="https://i.imgur.com/ly1q00t.jpeg" width="400">
+
 <img src="https://i.imgur.com/sulnni9.jpeg" width="400">
