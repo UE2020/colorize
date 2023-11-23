@@ -164,8 +164,7 @@ fn main() -> Result<()> {
             let duration = Duration::from_secs_f32(args[4].parse::<f32>()? * 3600.0);
             let now = Instant::now();
             let mut steps = 0usize;
-            let from_checkpoint = args[5] == "true";
-            //let mut test_steps = 0usize;
+            let use_gan = args[5] == "true";
             eprintln!();
             for epoch in 1.. {
                 images.shuffle(&mut thread_rng());
@@ -184,9 +183,8 @@ fn main() -> Result<()> {
                     let target = target.to_device(device);
                     let input = input.to_device(device);
                     let fake_color = generator_net.forward_t(&input.repeat(&[1, 3, 1, 1]), true);
-                    let greater_than_half = now.elapsed() >= (duration / 2) || from_checkpoint;
                     // optimize discriminator
-                    if greater_than_half {
+                    if use_gan {
                         discriminator_vs.unfreeze();
                         discriminator_opt.zero_grad();
                         let fake_image =
@@ -209,7 +207,7 @@ fn main() -> Result<()> {
                     // optimize generator
                     discriminator_vs.freeze();
                     generator_opt.zero_grad();
-                    let loss_g = match greater_than_half {
+                    let loss_g = match use_gan {
                         true => {
                             let fake_image = Tensor::cat(
                                 &[input.shallow_clone(), fake_color.shallow_clone()],
