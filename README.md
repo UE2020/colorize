@@ -39,5 +39,5 @@ https://drive.google.com/file/d/1S6wAA-YkJsOVdh5-oHC6DkyPvfWiACA7/view?usp=shari
 
 Colorizing legacy photos:
 ![Martin Luther King Jr.](https://i.imgur.com/h6m3LSP.png)
-![Ansel Adams's "Majestic Valley"](https://imgur.com/a/27xo2U4)
-![Migrant mother during the Great Depression](https://imgur.com/a/eATzLgi)
+![Ansel Adams's "Majestic Valley"](https://i.imgur.com/MefnRvW.jpeg)
+![Migrant mother during the Great Depression](https://i.imgur.com/ly1q00t.jpeg)
