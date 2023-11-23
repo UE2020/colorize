@@ -1,5 +1,5 @@
 # Colorize!
-A deep learning image &amp; video colorizer using Rust and libtorch.
+A deep learning image &amp; video colorizer using Rust and libtorch. The model is a slightly modified pix2pix (Isola et al.)
 
 ## Training
 To initialize the model, you'll need to run `src/transform.py` and `src/model.py` to initialize the LAB<->RGB and pre-trained generator torchscripts, respectively.
@@ -47,3 +47,27 @@ Colorizing legacy photos:
 <img src="https://i.imgur.com/ly1q00t.jpeg" width="400">
 
 <img src="https://i.imgur.com/sulnni9.jpeg" width="400">
+
+## Credits
+Although it's currently unused, the multi-scale discriminator implementation in `src/model.py` is courtesy of https://github.com/NVIDIA/pix2pixHD.
+
+## Citation
+The model is based on the following papers:
+
+```
+@article{pix2pix2017,
+  title={Image-to-Image Translation with Conditional Adversarial Networks},
+  author={Isola, Phillip and Zhu, Jun-Yan and Zhou, Tinghui and Efros, Alexei A},
+  journal={CVPR},
+  year={2017}
+}
+```
+
+```
+@inproceedings{wang2018pix2pixHD,
+  title={High-Resolution Image Synthesis and Semantic Manipulation with Conditional GANs},
+  author={Ting-Chun Wang and Ming-Yu Liu and Jun-Yan Zhu and Andrew Tao and Jan Kautz and Bryan Catanzaro},  
+  booktitle={Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition},
+  year={2018}
+}
+```
