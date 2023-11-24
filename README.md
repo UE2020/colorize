@@ -1,5 +1,5 @@
 # Colorize!
-A deep learning image &amp; video colorizer using Rust and libtorch. The model is a slightly modified pix2pix (Isola et al.)
+A deep learning image &amp; video colorizer using Rust and libtorch. The model is a slightly modified pix2pix (Isola et al.). A video demo is available here: [The Three Stooges Episode 117 (Malice In The Palace) colorized](https://www.youtube.com/watch?v=F3TNbHVFwqw)
 
 ## Training
 To initialize the model, you'll need to run `src/transform.py` and `src/model.py` to initialize the LAB<->RGB and pre-trained generator torchscripts, respectively.
