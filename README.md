@@ -39,6 +39,7 @@ https://drive.google.com/file/d/1S6wAA-YkJsOVdh5-oHC6DkyPvfWiACA7/view?usp=shari
 
 Colorizing legacy photos:
 
+<img src="https://i.imgur.com/LDGGVt0.png" width="400">
 
 <img src="https://i.imgur.com/O0Lhm75.jpeg" width="400">
 
